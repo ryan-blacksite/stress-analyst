@@ -1,5 +1,6 @@
 import { getKnowledgeDocumentText, retrieveRelevantAnalysisReferences } from './knowledgeBase';
 import type {
+  CalculationStep,
   MarginOfSafetyResult,
   MaterialProperties,
   ToolDefinition,
@@ -9,6 +10,23 @@ import type {
 type JsonRecord = Record<string, unknown>;
 
 const DEFAULT_FOS = 1.5;
+
+function fmt(value: number, decimals = 3): string {
+  if (!Number.isFinite(value)) return String(value);
+  const absValue = Math.abs(value);
+  if (absValue !== 0 && (absValue >= 1e6 || absValue < 1e-3)) {
+    return value.toExponential(3);
+  }
+  return value.toLocaleString('en-US', {
+    maximumFractionDigits: decimals,
+    minimumFractionDigits: 0,
+  });
+}
+
+function signed(value: number, decimals = 3): string {
+  const formatted = fmt(Math.abs(value), decimals);
+  return value >= 0 ? `+${formatted}` : `-${formatted}`;
+}
 
 const MATERIAL_DATABASE: Record<string, MaterialProperties> = {
   '2024-t3': {
@@ -186,12 +204,27 @@ async function getMarginOfSafety(args: JsonRecord): Promise<ToolExecutionResult>
   }
 
   const result = calculateMarginOfSafety(applied, allowable, factorOfSafety);
+  const calculationSteps: CalculationStep[] = [
+    {
+      step: 'Reserve factor',
+      formula: 'RF = F_allow / (F_applied × FoS)',
+      values: `RF = ${fmt(allowable)} / (${fmt(applied)} × ${fmt(factorOfSafety)})`,
+      result: `RF = ${fmt(result.reserveFactor)}`,
+    },
+    {
+      step: 'Margin of safety',
+      formula: 'MS = RF − 1',
+      values: `MS = ${fmt(result.reserveFactor)} − 1`,
+      result: `MS = ${signed(result.marginOfSafety)}`,
+    },
+  ];
   return {
     toolName: 'get_margin_of_safety',
-    summary: `Calculated margin of safety: ${result.marginOfSafety.toFixed(3)} (${result.status}).`,
+    summary: `Margin of safety: ${signed(result.marginOfSafety)} (${result.status}).`,
     status: result.status,
     governingMargin: result.marginOfSafety,
     data: result as unknown as JsonRecord,
+    calculationSteps,
   };
 }
 
@@ -215,6 +248,7 @@ async function runBucklingCheck(args: JsonRecord): Promise<ToolExecutionResult> 
     ?? (plateWidth !== undefined && thickness !== undefined && thickness > 0 ? plateWidth / thickness : undefined);
 
   const results: Array<{ mode: string; margin: number; criticalStressPsi: number }> = [];
+  const calculationSteps: CalculationStep[] = [];
 
   if (ePsi !== undefined) {
     const slendernessRatio = slenderness
@@ -223,18 +257,59 @@ async function runBucklingCheck(args: JsonRecord): Promise<ToolExecutionResult> 
         : undefined);
 
     if (slendernessRatio !== undefined && slendernessRatio > 0) {
+      if (slenderness === undefined && effectiveLength !== undefined && radiusOfGyration !== undefined) {
+        calculationSteps.push({
+          step: 'Slenderness ratio',
+          formula: 'λ = (K × L) / r',
+          values: `λ = (${fmt(kFactor)} × ${fmt(effectiveLength)}) / ${fmt(radiusOfGyration)}`,
+          result: `λ = ${fmt(slendernessRatio)}`,
+        });
+      }
+
       const eulerStress = (Math.PI ** 2 * ePsi) / (slendernessRatio ** 2);
+      calculationSteps.push({
+        step: 'Euler column stress',
+        formula: 'F_e = π² × E / λ²',
+        values: `F_e = π² × ${fmt(ePsi)} / ${fmt(slendernessRatio)}²`,
+        result: `F_e = ${fmt(eulerStress)} psi`,
+      });
+
       let criticalStress = eulerStress;
 
       if (yieldPsi !== undefined) {
         const transition = Math.sqrt((2 * Math.PI ** 2 * ePsi) / yieldPsi);
+        calculationSteps.push({
+          step: 'Short-column transition',
+          formula: 'λ_t = √(2π² × E / F_cy)',
+          values: `λ_t = √(2π² × ${fmt(ePsi)} / ${fmt(yieldPsi)})`,
+          result: `λ_t = ${fmt(transition)}`,
+        });
         if (slendernessRatio < transition) {
           criticalStress = yieldPsi * (1 - ((yieldPsi * slendernessRatio ** 2) / (4 * Math.PI ** 2 * ePsi)));
+          calculationSteps.push({
+            step: 'Johnson short-column stress',
+            formula: 'F_cr = F_cy × [1 − (F_cy × λ²) / (4π² × E)]',
+            values: `F_cr = ${fmt(yieldPsi)} × [1 − (${fmt(yieldPsi)} × ${fmt(slendernessRatio)}²) / (4π² × ${fmt(ePsi)})]`,
+            result: `F_cr = ${fmt(criticalStress)} psi`,
+          });
+        } else {
+          calculationSteps.push({
+            step: 'Long-column governs (λ ≥ λ_t)',
+            formula: 'F_cr = F_e',
+            values: `F_cr = ${fmt(eulerStress)}`,
+            result: `F_cr = ${fmt(criticalStress)} psi`,
+          });
         }
       }
 
       if (appliedStress !== undefined && criticalStress > 0) {
         const ms = calculateMarginOfSafety(appliedStress, criticalStress, 1);
+        calculationSteps.push({
+          step: 'Column margin of safety',
+          formula: 'MS = F_cr / σ − 1',
+          values: `MS = ${fmt(criticalStress)} / ${fmt(appliedStress)} − 1`,
+          result: `MS = ${signed(ms.marginOfSafety)}`,
+        });
         results.push({
           mode: 'column buckling',
           margin: ms.marginOfSafety,
@@ -249,8 +324,21 @@ async function runBucklingCheck(args: JsonRecord): Promise<ToolExecutionResult> 
       (bucklingCoefficient * Math.PI ** 2 * ePsi * (thickness / plateWidth) ** 2) /
       (12 * (1 - poisson ** 2));
 
+    calculationSteps.push({
+      step: 'Plate buckling stress',
+      formula: 'F_cr = k × π² × E / [12(1 − ν²) × (b/t)²]',
+      values: `F_cr = ${fmt(bucklingCoefficient)} × π² × ${fmt(ePsi)} / [12(1 − ${fmt(poisson)}²) × (${fmt(plateWidth)}/${fmt(thickness)})²]`,
+      result: `F_cr = ${fmt(plateCriticalStress)} psi`,
+    });
+
     if (appliedStress !== undefined && plateCriticalStress > 0) {
       const ms = calculateMarginOfSafety(appliedStress, plateCriticalStress, 1);
+      calculationSteps.push({
+        step: 'Plate margin of safety',
+        formula: 'MS = F_cr / σ − 1',
+        values: `MS = ${fmt(plateCriticalStress)} / ${fmt(appliedStress)} − 1`,
+        result: `MS = ${signed(ms.marginOfSafety)}`,
+      });
       results.push({
         mode: 'plate buckling',
         margin: ms.marginOfSafety,
@@ -261,8 +349,20 @@ async function runBucklingCheck(args: JsonRecord): Promise<ToolExecutionResult> 
 
   if (yieldPsi !== undefined && cripplingCoefficient !== undefined && bOverT !== undefined && bOverT > 0) {
     const cripplingStress = yieldPsi * cripplingCoefficient * bOverT ** -0.8;
+    calculationSteps.push({
+      step: 'Crippling stress',
+      formula: 'F_cc = F_cy × C × (b/t)^(−0.8)',
+      values: `F_cc = ${fmt(yieldPsi)} × ${fmt(cripplingCoefficient)} × ${fmt(bOverT)}^(−0.8)`,
+      result: `F_cc = ${fmt(cripplingStress)} psi`,
+    });
     if (appliedStress !== undefined && cripplingStress > 0) {
       const ms = calculateMarginOfSafety(appliedStress, cripplingStress, 1);
+      calculationSteps.push({
+        step: 'Crippling margin of safety',
+        formula: 'MS = F_cc / σ − 1',
+        values: `MS = ${fmt(cripplingStress)} / ${fmt(appliedStress)} − 1`,
+        result: `MS = ${signed(ms.marginOfSafety)}`,
+      });
       results.push({
         mode: 'crippling',
         margin: ms.marginOfSafety,
@@ -292,7 +392,7 @@ async function runBucklingCheck(args: JsonRecord): Promise<ToolExecutionResult> 
   const governing = results[0];
   return {
     toolName: 'run_buckling_check',
-    summary: `${component}: governing buckling mode is ${governing.mode} with MS ${governing.margin.toFixed(3)}.`,
+    summary: `${component}: governing buckling mode is ${governing.mode} with MS ${signed(governing.margin)}.`,
     status: classifyMargin(governing.margin),
     governingMargin: governing.margin,
     data: {
@@ -300,6 +400,7 @@ async function runBucklingCheck(args: JsonRecord): Promise<ToolExecutionResult> 
       governingMode: governing.mode,
       checks: results,
     },
+    calculationSteps,
   };
 }
 
@@ -338,9 +439,30 @@ async function runBearingAnalysis(args: JsonRecord): Promise<ToolExecutionResult
   const allowableLoad = bearingStrengthPsi * diameter * thickness;
   const result = calculateMarginOfSafety(appliedLoad, allowableLoad, fos);
 
+  const calculationSteps: CalculationStep[] = [
+    {
+      step: 'Bearing allowable load',
+      formula: 'P_bru = F_bru × D × t',
+      values: `P_bru = ${fmt(bearingStrengthPsi)} × ${fmt(diameter)} × ${fmt(thickness)}`,
+      result: `P_bru = ${fmt(allowableLoad)} lbf`,
+    },
+    {
+      step: 'Reserve factor',
+      formula: 'RF = P_bru / (P_applied × FoS)',
+      values: `RF = ${fmt(allowableLoad)} / (${fmt(appliedLoad)} × ${fmt(fos)})`,
+      result: `RF = ${fmt(result.reserveFactor)}`,
+    },
+    {
+      step: 'Bearing margin of safety',
+      formula: 'MS = RF − 1',
+      values: `MS = ${fmt(result.reserveFactor)} − 1`,
+      result: `MS = ${signed(result.marginOfSafety)}`,
+    },
+  ];
+
   return {
     toolName: 'run_bearing_analysis',
-    summary: `${joint}: bearing allowable ${allowableLoad.toFixed(1)} lbf, MS ${result.marginOfSafety.toFixed(3)} (${result.status}).`,
+    summary: `${joint}: bearing allowable ${fmt(allowableLoad)} lbf, MS ${signed(result.marginOfSafety)} (${result.status}).`,
     status: result.status,
     governingMargin: result.marginOfSafety,
     data: {
@@ -348,6 +470,7 @@ async function runBearingAnalysis(args: JsonRecord): Promise<ToolExecutionResult
       bearingAllowableLoadLbf: allowableLoad,
       ...result,
     },
+    calculationSteps,
   };
 }
 
@@ -373,10 +496,23 @@ async function runShearAnalysis(args: JsonRecord): Promise<ToolExecutionResult> 
   const thickness = asNumber(args.thickness_in);
 
   const modes: Array<{ mode: string; allowable: number; margin: number }> = [];
+  const calculationSteps: CalculationStep[] = [];
 
   if (appliedLoad !== undefined && shearArea !== undefined && shearStrengthPsi !== undefined) {
     const allowable = shearStrengthPsi * shearArea;
     const result = calculateMarginOfSafety(appliedLoad, allowable, fos);
+    calculationSteps.push({
+      step: 'Web/direct shear allowable',
+      formula: 'P_s = F_su × A_s',
+      values: `P_s = ${fmt(shearStrengthPsi)} × ${fmt(shearArea)}`,
+      result: `P_s = ${fmt(allowable)} lbf`,
+    });
+    calculationSteps.push({
+      step: 'Web/direct shear MS',
+      formula: 'MS = P_s / (P × FoS) − 1',
+      values: `MS = ${fmt(allowable)} / (${fmt(appliedLoad)} × ${fmt(fos)}) − 1`,
+      result: `MS = ${signed(result.marginOfSafety)}`,
+    });
     modes.push({
       mode: 'web/direct shear',
       allowable,
@@ -387,6 +523,18 @@ async function runShearAnalysis(args: JsonRecord): Promise<ToolExecutionResult> 
   if (appliedLoad !== undefined && fastenerCount !== undefined && fastenerAllowable !== undefined) {
     const allowable = fastenerCount * fastenerAllowable;
     const result = calculateMarginOfSafety(appliedLoad, allowable, fos);
+    calculationSteps.push({
+      step: 'Fastener group shear allowable',
+      formula: 'P_group = n × P_s_single',
+      values: `P_group = ${fmt(fastenerCount)} × ${fmt(fastenerAllowable)}`,
+      result: `P_group = ${fmt(allowable)} lbf`,
+    });
+    calculationSteps.push({
+      step: 'Fastener shear MS',
+      formula: 'MS = P_group / (P × FoS) − 1',
+      values: `MS = ${fmt(allowable)} / (${fmt(appliedLoad)} × ${fmt(fos)}) − 1`,
+      result: `MS = ${signed(result.marginOfSafety)}`,
+    });
     modes.push({
       mode: 'fastener shear',
       allowable,
@@ -402,6 +550,18 @@ async function runShearAnalysis(args: JsonRecord): Promise<ToolExecutionResult> 
   ) {
     const allowable = 2 * edgeDistance * thickness * shearStrengthPsi;
     const result = calculateMarginOfSafety(appliedLoad, allowable, fos);
+    calculationSteps.push({
+      step: 'Shear-out allowable',
+      formula: 'P_so = 2 × e × t × F_su',
+      values: `P_so = 2 × ${fmt(edgeDistance)} × ${fmt(thickness)} × ${fmt(shearStrengthPsi)}`,
+      result: `P_so = ${fmt(allowable)} lbf`,
+    });
+    calculationSteps.push({
+      step: 'Shear-out MS',
+      formula: 'MS = P_so / (P × FoS) − 1',
+      values: `MS = ${fmt(allowable)} / (${fmt(appliedLoad)} × ${fmt(fos)}) − 1`,
+      result: `MS = ${signed(result.marginOfSafety)}`,
+    });
     modes.push({
       mode: 'shear-out',
       allowable,
@@ -430,7 +590,7 @@ async function runShearAnalysis(args: JsonRecord): Promise<ToolExecutionResult> 
   const governing = modes[0];
   return {
     toolName: 'run_shear_analysis',
-    summary: `${component}: governing shear mode is ${governing.mode} with MS ${governing.margin.toFixed(3)}.`,
+    summary: `${component}: governing shear mode is ${governing.mode} with MS ${signed(governing.margin)}.`,
     status: classifyMargin(governing.margin),
     governingMargin: governing.margin,
     data: {
@@ -438,6 +598,7 @@ async function runShearAnalysis(args: JsonRecord): Promise<ToolExecutionResult> 
       governingMode: governing.mode,
       checks: modes,
     },
+    calculationSteps,
   };
 }
 
@@ -466,10 +627,41 @@ async function runFullAnalysis(args: JsonRecord): Promise<ToolExecutionResult> {
     .filter((result) => typeof result.governingMargin === 'number')
     .sort((left, right) => (left.governingMargin ?? 0) - (right.governingMargin ?? 0))[0];
 
+  const sectionLabel = (tool: string): string => {
+    if (tool === 'run_buckling_check') return 'BUCKLING';
+    if (tool === 'run_bearing_analysis') return 'BEARING';
+    if (tool === 'run_shear_analysis') return 'SHEAR';
+    return tool.toUpperCase();
+  };
+
+  const calculationSteps: CalculationStep[] = [];
+  for (const sub of [buckling, bearing, shear]) {
+    const subSteps = sub.calculationSteps ?? [];
+    if (subSteps.length === 0) continue;
+    const label = sectionLabel(sub.toolName);
+    for (const entry of subSteps) {
+      calculationSteps.push({
+        step: `[${label}] ${entry.step}`,
+        formula: entry.formula,
+        values: entry.values,
+        result: entry.result,
+      });
+    }
+  }
+
+  if (governing && typeof governing.governingMargin === 'number') {
+    calculationSteps.push({
+      step: 'Governing failure mode',
+      formula: 'min(MS across checks)',
+      values: `min(buckling, bearing, shear) → ${governing.toolName}`,
+      result: `MS_governing = ${signed(governing.governingMargin)}`,
+    });
+  }
+
   return {
     toolName: 'run_full_analysis',
     summary: governing
-      ? `Integrated check complete. Governing mode is ${governing.toolName} at MS ${governing.governingMargin?.toFixed(3)}.`
+      ? `Integrated check complete. Governing mode is ${governing.toolName} at MS ${signed(governing.governingMargin ?? 0)}.`
       : 'Integrated check complete.',
     status: governing ? classifyMargin(governing.governingMargin ?? 0) : 'INFO',
     governingMargin: governing?.governingMargin,
@@ -478,6 +670,7 @@ async function runFullAnalysis(args: JsonRecord): Promise<ToolExecutionResult> {
       bearing,
       shear,
     },
+    calculationSteps,
   };
 }
 

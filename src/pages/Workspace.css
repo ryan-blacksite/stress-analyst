@@ -352,6 +352,238 @@
   font-size: 12.5px;
   line-height: 1.7;
   color: var(--text-1);
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.report__section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.report__section + .report__section {
+  border-top: 1px dashed var(--border-subtle);
+  padding-top: 24px;
+}
+
+.report__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report__section-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-0);
+}
+
+.report__status {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+.report__status--pass {
+  color: var(--success);
+  border-color: rgba(58, 167, 118, 0.4);
+  background: rgba(58, 167, 118, 0.08);
+}
+
+.report__status--marginal {
+  color: #d1a144;
+  border-color: rgba(209, 161, 68, 0.4);
+  background: rgba(209, 161, 68, 0.08);
+}
+
+.report__status--fail {
+  color: var(--danger);
+  border-color: rgba(198, 93, 93, 0.4);
+  background: rgba(198, 93, 93, 0.08);
+}
+
+.report__status--info {
+  color: var(--text-2);
+  border-color: var(--border);
+  background: var(--bg-elevated);
+}
+
+.report__summary {
+  margin: 0;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-1);
+}
+
+.report__governing {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 6px 14px;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  font-size: 12px;
+}
+
+.report__label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.report__value {
+  font-family: var(--font-mono);
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+}
+
+.report__block-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+
+.report__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.report__table th,
+.report__table td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+
+.report__table thead th {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  font-weight: 600;
+}
+
+.report__table tbody th {
+  font-weight: 500;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+
+.report__table tbody td {
+  color: var(--text-0);
+  font-family: var(--font-mono);
+}
+
+.report__step-list {
+  list-style: none;
+  counter-reset: step;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.report__step {
+  counter-increment: step;
+  padding: 10px 12px 12px 40px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  position: relative;
+}
+
+.report__step::before {
+  content: counter(step, decimal-leading-zero);
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+
+.report__step-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-1);
+  margin-bottom: 6px;
+}
+
+.report__step-line {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.report__step-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding-top: 2px;
+}
+
+.report__step-value {
+  color: var(--text-0);
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+
+.report__step-result {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.report__missing ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-1);
+}
+
+.report__missing li {
+  margin-bottom: 3px;
+}
+
+.report__notes {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.report__raw {
+  margin: 0;
+  padding: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  font-size: 11px;
+  color: var(--text-1);
   white-space: pre-wrap;
   word-wrap: break-word;
 }

@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../types';
+import type { ChatMessage, StressToolExecution } from '../types';
 
 const API_URL: string = import.meta.env.VITE_API_URL ?? '';
 const API_BEARER_TOKEN: string = import.meta.env.VITE_API_BEARER_TOKEN ?? '';
@@ -27,6 +27,7 @@ interface StressStreamEvent {
   chunk?: string;
   done?: boolean;
   error?: string;
+  toolExecutions?: StressToolExecution[];
   [key: string]: unknown;
 }
 
@@ -34,6 +35,7 @@ interface StressChatResult {
   conversationId?: string;
   messageId?: string;
   content: string;
+  toolExecutions?: StressToolExecution[];
 }
 
 async function postStressChat(body: {
@@ -61,6 +63,7 @@ async function postStressChat(body: {
   let content = '';
   let conversationId = body.conversationId;
   let messageId: string | undefined;
+  let toolExecutions: StressToolExecution[] | undefined;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -91,10 +94,13 @@ async function postStressChat(body: {
       if (parsed.conversationId) conversationId = parsed.conversationId;
       if (parsed.messageId) messageId = parsed.messageId;
       if (typeof parsed.chunk === 'string') content += parsed.chunk;
+      if (Array.isArray(parsed.toolExecutions)) {
+        toolExecutions = parsed.toolExecutions;
+      }
     }
   }
 
-  return { conversationId, messageId, content: content.trim() };
+  return { conversationId, messageId, content: content.trim(), toolExecutions };
 }
 
 export async function sendChatMessage(
@@ -116,6 +122,7 @@ export async function sendChatMessage(
     role: 'assistant',
     content: result.content || 'No response returned from stress analyst.',
     timestamp: new Date().toISOString(),
+    toolExecutions: result.toolExecutions,
   };
 }
 

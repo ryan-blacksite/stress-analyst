@@ -107,12 +107,20 @@ export interface MarginOfSafetyResult {
   status: 'PASS' | 'MARGINAL' | 'FAIL';
 }
 
+export interface CalculationStep {
+  step: string;
+  formula: string;
+  values: string;
+  result: string;
+}
+
 export interface ToolExecutionResult {
   toolName: string;
   summary: string;
   status: 'PASS' | 'MARGINAL' | 'FAIL' | 'INFO';
   governingMargin?: number;
   data: Record<string, unknown>;
+  calculationSteps?: CalculationStep[];
 }
 
 export interface FlaggedForReview {
