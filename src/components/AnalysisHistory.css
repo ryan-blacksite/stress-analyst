@@ -1,0 +1,125 @@
+.history {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.history__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.history__title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-text-muted);
+}
+
+.history__count {
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.history__empty {
+  padding: 14px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  text-align: center;
+  color: var(--color-text-subtle);
+  font-size: 12px;
+  background: var(--color-surface-alt);
+}
+
+.history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history__item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.history__item:hover {
+  border-color: var(--color-border-strong);
+}
+
+.history__item--active {
+  border-color: var(--color-primary);
+  background: #eaf0fa;
+}
+
+.history__item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.history__item-tool {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.history__item-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.history__item-summary {
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.history__badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 2px;
+  border: 1px solid transparent;
+}
+
+.history__badge--running {
+  color: var(--color-primary);
+  background: #e5ecf7;
+  border-color: #c4d1e8;
+}
+
+.history__badge--complete {
+  color: var(--color-success);
+  background: #e6f1ea;
+  border-color: #bdd8c7;
+}
+
+.history__badge--error {
+  color: var(--color-danger);
+  background: #f9e8e8;
+  border-color: #e5c2c2;
+}
