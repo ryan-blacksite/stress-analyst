@@ -1,30 +1,42 @@
 :root {
-  --bg-0: #05080f;
-  --bg-1: #0a111f;
-  --bg-2: #0e1728;
-  --bg-3: #132033;
-  --bg-panel: #0c1525;
-  --bg-panel-alt: #101b2e;
-  --bg-elevated: #16233a;
+  --bg-0: #06070b;
+  --bg-1: #0a0a0f;
+  --bg-2: #0e0f16;
+  --bg-3: #141722;
+  --bg-panel: rgba(15, 23, 42, 0.74);
+  --bg-panel-alt: rgba(20, 20, 31, 0.78);
+  --bg-elevated: rgba(30, 41, 59, 0.72);
 
-  --border: #1c2b47;
-  --border-strong: #27395a;
-  --border-subtle: #152037;
+  --border: rgba(165, 243, 252, 0.14);
+  --border-strong: rgba(103, 232, 249, 0.38);
+  --border-subtle: rgba(255, 255, 255, 0.08);
 
-  --text-0: #e8ecf3;
-  --text-1: #c4ccdb;
-  --text-2: #8b97ad;
-  --text-3: #5e6a80;
+  --text-0: #ffffff;
+  --text-1: #e6edf7;
+  --text-2: #cbd5e1;
+  --text-3: #94a3b8;
 
-  --accent: #5b8dd6;
-  --accent-hover: #6e9ee0;
-  --accent-active: #4778c2;
-  --accent-soft: rgba(91, 141, 214, 0.12);
-  --accent-line: rgba(91, 141, 214, 0.35);
+  --accent: #22d3ee;
+  --accent-hover: #67e8f9;
+  --accent-active: #14b8a6;
+  --accent-soft: rgba(34, 211, 238, 0.14);
+  --accent-line: rgba(34, 211, 238, 0.3);
 
-  --success: #3aa776;
-  --warning: #c99448;
-  --danger: #c65d5d;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.32);
+  --shadow-md: 0 18px 48px rgba(0, 0, 0, 0.38);
+  --shadow-lg: 0 26px 80px rgba(0, 0, 0, 0.46);
+  --glass-blur: blur(18px);
+  --surface-gradient:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
+  --app-background:
+    radial-gradient(circle at top left, rgba(8, 145, 178, 0.24), transparent 32%),
+    radial-gradient(circle at 80% 20%, rgba(34, 211, 238, 0.18), transparent 22%),
+    radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.14), transparent 28%),
+    linear-gradient(180deg, #0a0a0f 0%, #06070b 100%);
 
   --font-sans: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
   --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
@@ -51,7 +63,7 @@ body {
   font-size: 14px;
   line-height: 1.55;
   color: var(--text-0);
-  background: var(--bg-0);
+  background: var(--app-background);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -101,7 +113,7 @@ a {
 }
 
 :focus-visible {
-  outline: 1px solid var(--accent);
+  outline: 2px solid rgba(103, 232, 249, 0.95);
   outline-offset: 2px;
 }
 
@@ -115,10 +127,10 @@ a {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1c2b47;
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #27395a;
+  background: rgba(255, 255, 255, 0.22);
 }

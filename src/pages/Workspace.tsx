@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Children, cloneElement, isValidElement, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
+import remarkGfm from 'remark-gfm';
 import {
   listAnalysisFiles,
   makeAnalysisFilename,
@@ -180,6 +183,106 @@ function tryParseSnapshot(text: string): AnalysisSnapshot | null {
     // fall through to plain text
   }
   return null;
+}
+
+const ENGINEERING_SUBSCRIPT_RE = /([\p{L}])_([a-z]{1,4})/gu;
+
+function renderEngineeringNotation(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(ENGINEERING_SUBSCRIPT_RE)) {
+    const [token, base, subscript] = match;
+    const start = match.index ?? 0;
+    if (start > lastIndex) {
+      nodes.push(text.slice(lastIndex, start));
+    }
+    nodes.push(
+      <span key={`${token}-${start}`} className="msg__notation">
+        {base}
+        <sub>{subscript}</sub>
+      </span>,
+    );
+    lastIndex = start + token.length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : [text];
+}
+
+function renderNotationChildren(children: ReactNode): ReactNode {
+  return Children.map(children, (child) => {
+    if (typeof child === 'string') {
+      return renderEngineeringNotation(child);
+    }
+
+    if (!isValidElement<{ children?: ReactNode }>(child)) {
+      return child;
+    }
+
+    if (typeof child.type === 'string' && (child.type === 'code' || child.type === 'pre')) {
+      return child;
+    }
+
+    return cloneElement(child, {
+      ...child.props,
+      children: renderNotationChildren(child.props.children),
+    });
+  });
+}
+
+function MarkdownParagraph({ children }: { children?: ReactNode }) {
+  return <p>{renderNotationChildren(children)}</p>;
+}
+
+function MarkdownListItem({ children }: { children?: ReactNode }) {
+  return <li>{renderNotationChildren(children)}</li>;
+}
+
+function MarkdownStrong({ children }: { children?: ReactNode }) {
+  return <strong>{renderNotationChildren(children)}</strong>;
+}
+
+function MarkdownEmphasis({ children }: { children?: ReactNode }) {
+  return <em>{renderNotationChildren(children)}</em>;
+}
+
+function MarkdownHeading({
+  level,
+  children,
+}: {
+  level: 1 | 2 | 3 | 4 | 5 | 6;
+  children?: ReactNode;
+}) {
+  const Tag = `h${level}` as const;
+  return <Tag>{renderNotationChildren(children)}</Tag>;
+}
+
+function AssistantMessageMarkdown({ content }: { content: string }) {
+  return (
+    <div className="msg__markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        components={{
+          h1: ({ children }) => <MarkdownHeading level={1}>{children}</MarkdownHeading>,
+          h2: ({ children }) => <MarkdownHeading level={2}>{children}</MarkdownHeading>,
+          h3: ({ children }) => <MarkdownHeading level={3}>{children}</MarkdownHeading>,
+          h4: ({ children }) => <MarkdownHeading level={4}>{children}</MarkdownHeading>,
+          h5: ({ children }) => <MarkdownHeading level={5}>{children}</MarkdownHeading>,
+          h6: ({ children }) => <MarkdownHeading level={6}>{children}</MarkdownHeading>,
+          p: ({ children }) => <MarkdownParagraph>{children}</MarkdownParagraph>,
+          li: ({ children }) => <MarkdownListItem>{children}</MarkdownListItem>,
+          strong: ({ children }) => <MarkdownStrong>{children}</MarkdownStrong>,
+          em: ({ children }) => <MarkdownEmphasis>{children}</MarkdownEmphasis>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export default function Workspace() {
@@ -468,7 +571,11 @@ export default function Workspace() {
                     </span>
                     <span className="msg__time">{formatTime(msg.timestamp)}</span>
                   </div>
-                  <div className="msg__body">{msg.content}</div>
+                  <div className={`msg__body${msg.role === 'assistant' ? ' msg__body--markdown' : ''}`}>
+                    {msg.role === 'assistant'
+                      ? <AssistantMessageMarkdown content={msg.content} />
+                      : msg.content}
+                  </div>
                 </div>
               ))}
               {pending && (
