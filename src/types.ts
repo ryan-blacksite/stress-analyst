@@ -39,3 +39,11 @@ export interface ChatMessage {
   timestamp: string;
   toolExecutions?: StressToolExecution[];
 }
+
+export interface AnalysisSnapshot {
+  version: 1;
+  savedAt: string;
+  summary?: string;
+  analysisType?: string;
+  toolExecutions: StressToolExecution[];
+}

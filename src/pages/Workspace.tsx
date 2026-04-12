@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { sendChatMessage } from '../api/client';
-import type { ChatMessage, StressToolExecution } from '../types';
+import {
+  listAnalysisFiles,
+  makeAnalysisFilename,
+  readAnalysisFile,
+  saveAnalysisFile,
+  sendChatMessage,
+  type StressWorkspaceFile,
+} from '../api/client';
+import type { AnalysisSnapshot, ChatMessage, StressToolExecution } from '../types';
 import './Workspace.css';
 
 const WELCOME: ChatMessage = {
@@ -27,6 +34,21 @@ function formatTime(iso: string): string {
   }
 }
 
+function formatDate(iso: string | undefined): string {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString([], {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
 function toolTitle(toolName: string | undefined): string {
   switch (toolName) {
     case 'run_full_analysis':
@@ -46,6 +68,44 @@ function toolTitle(toolName: string | undefined): string {
   }
 }
 
+function shortAnalysisType(toolName: string | undefined): string {
+  switch (toolName) {
+    case 'run_full_analysis':
+      return 'full';
+    case 'run_buckling_check':
+      return 'buckling';
+    case 'run_bearing_analysis':
+      return 'bearing';
+    case 'run_shear_analysis':
+      return 'shear';
+    case 'get_margin_of_safety':
+      return 'ms';
+    case 'get_material_properties':
+      return 'material';
+    default:
+      return 'analysis';
+  }
+}
+
+function typeLabel(type: string | undefined): string {
+  switch (type) {
+    case 'full':
+      return 'Integrated';
+    case 'buckling':
+      return 'Buckling';
+    case 'bearing':
+      return 'Bearing';
+    case 'shear':
+      return 'Shear';
+    case 'ms':
+      return 'Margin';
+    case 'material':
+      return 'Material';
+    default:
+      return type ?? 'Analysis';
+  }
+}
+
 function formatInputValue(value: number | string): string {
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return String(value);
@@ -62,10 +122,54 @@ function formatMargin(value: number | undefined): string {
   return `${sign}${Math.abs(value).toFixed(3)}`;
 }
 
+function deriveSnapshotMeta(toolExecutions: StressToolExecution[]): { analysisType: string; slug: string; summary: string } {
+  const governing = toolExecutions.find((t) => t.resultParsed && typeof t.resultParsed.governingMargin === 'number')
+    ?? toolExecutions[toolExecutions.length - 1];
+  const toolName = governing?.resultParsed?.toolName ?? governing?.toolName;
+  const analysisType = shortAnalysisType(toolName);
+  const slug = governing?.resultParsed?.component ?? governing?.resultParsed?.governingMode ?? toolTitle(toolName);
+  const summary = governing?.resultParsed?.summary ?? `Stress analysis (${typeLabel(analysisType)})`;
+  return { analysisType, slug, summary };
+}
+
+interface LoadedFile {
+  path: string;
+  name: string;
+  savedAt?: string;
+  content: string;
+  snapshot: AnalysisSnapshot | null;
+}
+
+function tryParseSnapshot(text: string): AnalysisSnapshot | null {
+  try {
+    const parsed = JSON.parse(text) as Partial<AnalysisSnapshot>;
+    if (parsed && Array.isArray(parsed.toolExecutions)) {
+      return {
+        version: 1,
+        savedAt: parsed.savedAt ?? new Date().toISOString(),
+        summary: parsed.summary,
+        analysisType: parsed.analysisType,
+        toolExecutions: parsed.toolExecutions as StressToolExecution[],
+      };
+    }
+  } catch {
+    // fall through to plain text
+  }
+  return null;
+}
+
 export default function Workspace() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState(false);
+
+  const [files, setFiles] = useState<StressWorkspaceFile[]>([]);
+  const [filesError, setFilesError] = useState<string | null>(null);
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [loadedFile, setLoadedFile] = useState<LoadedFile | null>(null);
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
+  const [fileOpInProgress, setFileOpInProgress] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -79,6 +183,23 @@ export default function Workspace() {
     }
     return null;
   }, [messages]);
+
+  const refreshFiles = useCallback(async () => {
+    setLoadingFiles(true);
+    setFilesError(null);
+    try {
+      const list = await listAnalysisFiles();
+      setFiles(list);
+    } catch (err) {
+      setFilesError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoadingFiles(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshFiles();
+  }, [refreshFiles]);
 
   useEffect(() => {
     const el = threadRef.current;
@@ -103,6 +224,10 @@ export default function Workspace() {
     try {
       const reply = await sendChatMessage(history, text);
       setMessages((prev) => [...prev, reply]);
+      if (reply.toolExecutions && reply.toolExecutions.length > 0) {
+        setLoadedFile(null);
+        setActiveFilePath(null);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setMessages((prev) => [
@@ -127,6 +252,89 @@ export default function Workspace() {
     }
   }
 
+  const handleFileClick = useCallback(async (file: StressWorkspaceFile) => {
+    if (fileOpInProgress) return;
+    setFileOpInProgress(true);
+    setFilesError(null);
+    setActiveFilePath(file.path);
+    try {
+      const content = await readAnalysisFile(file.path);
+      const snapshot = tryParseSnapshot(content);
+      setLoadedFile({
+        path: file.path,
+        name: file.name,
+        savedAt: file.savedAt,
+        content,
+        snapshot,
+      });
+    } catch (err) {
+      setFilesError(err instanceof Error ? err.message : String(err));
+      setActiveFilePath(null);
+    } finally {
+      setFileOpInProgress(false);
+    }
+  }, [fileOpInProgress]);
+
+  const handleCloseFile = useCallback(() => {
+    setLoadedFile(null);
+    setActiveFilePath(null);
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    if (fileOpInProgress) return;
+    setSaveError(null);
+
+    let filename: string;
+    let content: string;
+
+    if (loadedFile) {
+      filename = loadedFile.name;
+      content = loadedFile.content;
+    } else if (latestToolRun && latestToolRun.toolExecutions && latestToolRun.toolExecutions.length > 0) {
+      const { analysisType, slug, summary } = deriveSnapshotMeta(latestToolRun.toolExecutions);
+      const snapshot: AnalysisSnapshot = {
+        version: 1,
+        savedAt: new Date().toISOString(),
+        summary,
+        analysisType,
+        toolExecutions: latestToolRun.toolExecutions,
+      };
+      content = JSON.stringify(snapshot, null, 2);
+      filename = makeAnalysisFilename(analysisType, slug);
+    } else {
+      setSaveError('Nothing on the canvas to save.');
+      return;
+    }
+
+    setFileOpInProgress(true);
+    try {
+      const saved = await saveAnalysisFile(filename, content);
+      await refreshFiles();
+      setActiveFilePath(saved.path);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFileOpInProgress(false);
+    }
+  }, [fileOpInProgress, latestToolRun, loadedFile, refreshFiles]);
+
+  const canvasMode: 'file' | 'tool' | 'empty' = loadedFile
+    ? 'file'
+    : latestToolRun && latestToolRun.toolExecutions && latestToolRun.toolExecutions.length > 0
+      ? 'tool'
+      : 'empty';
+
+  const canSave = !fileOpInProgress && (
+    (canvasMode === 'tool' && !!latestToolRun)
+    || (canvasMode === 'file' && !!loadedFile)
+  );
+
+  const canvasSubLabel = canvasMode === 'file' && loadedFile
+    ? `File · ${loadedFile.name}`
+    : canvasMode === 'tool' && latestToolRun
+      ? `Live · Updated ${formatTime(latestToolRun.timestamp)}`
+      : 'Idle';
+
   return (
     <div className="ws">
       <header className="ws__topbar">
@@ -141,78 +349,145 @@ export default function Workspace() {
       </header>
 
       <main className="ws__body">
-        <section className="ws__chat" aria-label="Agent chat">
-          <div className="ws__panel-head">
-            <span className="ws__panel-label">Conversation</span>
-            <span className="ws__panel-sub">Stress Analyst Agent</span>
-          </div>
+        <div className="ws__left-col">
+          <section className="ws__chat" aria-label="Agent chat">
+            <div className="ws__panel-head">
+              <span className="ws__panel-label">Conversation</span>
+              <span className="ws__panel-sub">Stress Analyst Agent</span>
+            </div>
 
-          <div className="ws__thread" ref={threadRef}>
-            {messages.map((msg) => (
-              <div key={msg.id} className={`msg msg--${msg.role}`}>
-                <div className="msg__meta">
-                  <span className="msg__role">
-                    {msg.role === 'user'
-                      ? 'You'
-                      : msg.role === 'assistant'
-                        ? 'Analyst'
-                        : 'System'}
-                  </span>
-                  <span className="msg__time">{formatTime(msg.timestamp)}</span>
+            <div className="ws__thread" ref={threadRef}>
+              {messages.map((msg) => (
+                <div key={msg.id} className={`msg msg--${msg.role}`}>
+                  <div className="msg__meta">
+                    <span className="msg__role">
+                      {msg.role === 'user'
+                        ? 'You'
+                        : msg.role === 'assistant'
+                          ? 'Analyst'
+                          : 'System'}
+                    </span>
+                    <span className="msg__time">{formatTime(msg.timestamp)}</span>
+                  </div>
+                  <div className="msg__body">{msg.content}</div>
                 </div>
-                <div className="msg__body">{msg.content}</div>
-              </div>
-            ))}
-            {pending && (
-              <div className="msg msg--assistant">
-                <div className="msg__meta">
-                  <span className="msg__role">Analyst</span>
+              ))}
+              {pending && (
+                <div className="msg msg--assistant">
+                  <div className="msg__meta">
+                    <span className="msg__role">Analyst</span>
+                  </div>
+                  <div className="msg__body msg__body--thinking">
+                    <span className="dots" aria-label="Thinking">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  </div>
                 </div>
-                <div className="msg__body msg__body--thinking">
-                  <span className="dots" aria-label="Thinking">
-                    <span />
-                    <span />
-                    <span />
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
 
-          <div className="ws__composer">
-            <textarea
-              ref={inputRef}
-              className="ws__input"
-              placeholder="Describe the structure, constraints, and loads..."
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={onKeyDown}
-              rows={2}
-            />
-            <button
-              type="button"
-              className="ws__send"
-              onClick={() => void handleSend()}
-              disabled={pending || draft.trim().length === 0}
-            >
-              Send
-            </button>
-          </div>
-        </section>
+            <div className="ws__composer">
+              <textarea
+                ref={inputRef}
+                className="ws__input"
+                placeholder="Describe the structure, constraints, and loads..."
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={onKeyDown}
+                rows={2}
+              />
+              <button
+                type="button"
+                className="ws__send"
+                onClick={() => void handleSend()}
+                disabled={pending || draft.trim().length === 0}
+              >
+                Send
+              </button>
+            </div>
+          </section>
+
+          <section className="ws__files" aria-label="Saved analyses">
+            <div className="ws__panel-head">
+              <span className="ws__panel-label">Saved Analyses</span>
+              <button
+                type="button"
+                className="ws__file-save"
+                onClick={() => void handleSave()}
+                disabled={!canSave}
+                title={canSave ? 'Save the current canvas to a new analysis file' : 'Run an analysis first'}
+              >
+                {fileOpInProgress ? 'Saving…' : 'Save Current Analysis'}
+              </button>
+            </div>
+
+            <div className="ws__file-list" role="list">
+              {loadingFiles && files.length === 0 ? (
+                <div className="ws__file-empty">Loading…</div>
+              ) : filesError ? (
+                <div className="ws__file-error">{filesError}</div>
+              ) : files.length === 0 ? (
+                <div className="ws__file-empty">
+                  No saved analyses yet. Run an analysis and hit <em>Save Current Analysis</em> to archive it.
+                </div>
+              ) : (
+                files.map((file) => {
+                  const active = activeFilePath === file.path;
+                  return (
+                    <button
+                      key={file.path}
+                      type="button"
+                      role="listitem"
+                      className={`ws__file-item${active ? ' ws__file-item--active' : ''}`}
+                      onClick={() => void handleFileClick(file)}
+                      disabled={fileOpInProgress && !active}
+                    >
+                      <div className="ws__file-row">
+                        <span className="ws__file-name">{file.slug ?? file.name}</span>
+                        <span className="ws__file-type">{typeLabel(file.analysisType)}</span>
+                      </div>
+                      <div className="ws__file-meta">
+                        <span className="ws__file-date">{formatDate(file.savedAt) || file.name}</span>
+                        <span className="ws__file-size">{Math.max(1, Math.round(file.size / 1024))} KB</span>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            {saveError && <div className="ws__file-error ws__file-error--footer">{saveError}</div>}
+          </section>
+        </div>
 
         <section className="ws__canvas" aria-label="Analysis canvas">
           <div className="ws__panel-head ws__panel-head--canvas">
             <span className="ws__panel-label">Analysis Canvas</span>
-            <span className="ws__panel-sub">
-              {latestToolRun ? `Updated ${formatTime(latestToolRun.timestamp)}` : 'Idle'}
-            </span>
+            <div className="ws__canvas-head-right">
+              <span className="ws__panel-sub">{canvasSubLabel}</span>
+              {canvasMode === 'file' && (
+                <button
+                  type="button"
+                  className="ws__canvas-close"
+                  onClick={handleCloseFile}
+                  title="Return to the latest live analysis"
+                >
+                  Close file
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="ws__canvas-body">
-            {latestToolRun && latestToolRun.toolExecutions && latestToolRun.toolExecutions.length > 0 ? (
+            {canvasMode === 'file' && loadedFile ? (
+              <FileCanvas file={loadedFile} />
+            ) : canvasMode === 'tool' && latestToolRun && latestToolRun.toolExecutions ? (
               <AnalysisReport
                 timestamp={latestToolRun.timestamp}
                 toolExecutions={latestToolRun.toolExecutions}
+                kicker="Analyst Output"
               />
             ) : (
               <div className="ws__empty">
@@ -220,7 +495,7 @@ export default function Workspace() {
                 <p className="ws__empty-title">Analysis output will appear here.</p>
                 <p className="ws__empty-sub">
                   Calculation steps, margins, and tool results render on this canvas
-                  as the analyst completes its work.
+                  as the analyst completes its work. Click a saved file to reopen it.
                 </p>
               </div>
             )}
@@ -231,16 +506,40 @@ export default function Workspace() {
   );
 }
 
-interface AnalysisReportProps {
-  timestamp: string;
-  toolExecutions: StressToolExecution[];
-}
-
-function AnalysisReport({ timestamp, toolExecutions }: AnalysisReportProps) {
+function FileCanvas({ file }: { file: LoadedFile }) {
+  if (file.snapshot) {
+    return (
+      <AnalysisReport
+        timestamp={file.snapshot.savedAt}
+        toolExecutions={file.snapshot.toolExecutions}
+        kicker={`Saved File · ${formatDate(file.snapshot.savedAt)}`}
+      />
+    );
+  }
   return (
     <article className="report">
       <div className="report__header">
-        <span className="report__kicker">Analyst Output</span>
+        <span className="report__kicker">Saved File</span>
+        <span className="report__time">{formatDate(file.savedAt)}</span>
+      </div>
+      <div className="report__content">
+        <pre className="report__raw">{file.content}</pre>
+      </div>
+    </article>
+  );
+}
+
+interface AnalysisReportProps {
+  timestamp: string;
+  toolExecutions: StressToolExecution[];
+  kicker?: string;
+}
+
+function AnalysisReport({ timestamp, toolExecutions, kicker = 'Analyst Output' }: AnalysisReportProps) {
+  return (
+    <article className="report">
+      <div className="report__header">
+        <span className="report__kicker">{kicker}</span>
         <span className="report__time">{formatTime(timestamp)}</span>
       </div>
       <div className="report__content">

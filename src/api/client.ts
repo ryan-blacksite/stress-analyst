@@ -103,6 +103,111 @@ async function postStressChat(body: {
   return { conversationId, messageId, content: content.trim(), toolExecutions };
 }
 
+export interface StressWorkspaceFile {
+  path: string;
+  size: number;
+  name: string;
+  savedAt?: string;
+  analysisType?: string;
+  slug?: string;
+}
+
+const ANALYSIS_FOLDER = 'analyses';
+
+function parseAnalysisFilename(path: string): { name: string; savedAt?: string; analysisType?: string; slug?: string } {
+  const base = path.replace(/^analyses\//, '');
+  const name = base;
+  const withoutExt = base.replace(/\.json$/i, '');
+  const match = withoutExt.match(/^analysis_(\d{8}T\d{6})_([a-z0-9]+)_(.+)$/i);
+  if (!match) return { name };
+  const [, compact, analysisType, slug] = match;
+  const iso = `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}T${compact.slice(9, 11)}:${compact.slice(11, 13)}:${compact.slice(13, 15)}`;
+  return { name, savedAt: iso, analysisType, slug };
+}
+
+function buildAnalysisFilename(date: Date, analysisType: string, slug: string): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const compact =
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `T${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  const cleanType = analysisType.toLowerCase().replace(/[^a-z0-9]+/g, '') || 'analysis';
+  const cleanSlug = slug
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'report';
+  return `analysis_${compact}_${cleanType}_${cleanSlug}.json`;
+}
+
+export function makeAnalysisFilename(analysisType: string, slug: string, date: Date = new Date()): string {
+  return buildAnalysisFilename(date, analysisType, slug);
+}
+
+function resolveWorkspaceId(workspaceId?: string): string {
+  return workspaceId ?? WORKSPACE_ID;
+}
+
+export async function listAnalysisFiles(workspaceId?: string): Promise<StressWorkspaceFile[]> {
+  const id = resolveWorkspaceId(workspaceId);
+  const res = await fetch(
+    url(`${STRESS_ANALYST_BASE}/workspaces/${encodeURIComponent(id)}/files`),
+    { headers: authHeaders() },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Failed to list files: ${res.status} ${text || res.statusText}`);
+  }
+  const payload = (await res.json()) as { files?: Array<{ path: string; size: number }> };
+  const files = payload.files ?? [];
+  return files
+    .filter((f) => f.path.startsWith(`${ANALYSIS_FOLDER}/`))
+    .map((f) => ({ path: f.path, size: f.size, ...parseAnalysisFilename(f.path) }))
+    .sort((a, b) => {
+      const aKey = a.savedAt ?? a.name;
+      const bKey = b.savedAt ?? b.name;
+      return bKey.localeCompare(aKey);
+    });
+}
+
+export async function readAnalysisFile(path: string, workspaceId?: string): Promise<string> {
+  const id = resolveWorkspaceId(workspaceId);
+  const params = new URLSearchParams({ path });
+  const res = await fetch(
+    url(`${STRESS_ANALYST_BASE}/workspaces/${encodeURIComponent(id)}/file?${params.toString()}`),
+    { headers: authHeaders() },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Failed to read file: ${res.status} ${text || res.statusText}`);
+  }
+  return res.text();
+}
+
+export async function saveAnalysisFile(
+  filename: string,
+  content: string,
+  workspaceId?: string,
+): Promise<StressWorkspaceFile> {
+  const id = resolveWorkspaceId(workspaceId);
+  const form = new FormData();
+  form.append('file', new Blob([content], { type: 'application/json' }), filename);
+  form.append('folder', ANALYSIS_FOLDER);
+  const res = await fetch(
+    url(`${STRESS_ANALYST_BASE}/workspaces/${encodeURIComponent(id)}/files/upload`),
+    { method: 'POST', headers: authHeaders(), body: form },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Failed to save file: ${res.status} ${text || res.statusText}`);
+  }
+  const payload = (await res.json()) as { file: { path: string; size: number } };
+  return {
+    path: payload.file.path,
+    size: payload.file.size,
+    ...parseAnalysisFilename(payload.file.path),
+  };
+}
+
 export async function sendChatMessage(
   _history: ChatMessage[],
   message: string,
