@@ -1,1 +1,1 @@
-{"root":["./vite.config.ts","./src/server/index.ts","./src/server/knowledgebase.ts","./src/server/openrouter.ts","./src/server/stressanalystbrain.ts","./src/server/stresstools.ts","./src/server/types.ts"],"version":"5.9.3"}
+{"root":["./vite.config.ts","./src/server/index.ts","./src/server/knowledgebase.ts","./src/server/openrouter.ts","./src/server/stressanalystbrain.ts","./src/server/stresstools.ts","./src/server/types.ts","./scripts/scrape-abbott.ts","./scripts/scrape-references.ts","./scripts/turndown-plugin-gfm.d.ts"],"version":"5.9.3"}

@@ -5,6 +5,12 @@ export interface CalculationStep {
   result: string;
 }
 
+export interface MessageAttachment {
+  filename: string;
+  mimeType: string;
+  data: string;
+}
+
 export interface StressToolExecution {
   toolCallId?: string;
   toolName: string;

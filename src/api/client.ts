@@ -1,4 +1,4 @@
-import type { ChatMessage, StressToolExecution } from '../types';
+import type { ChatMessage, MessageAttachment, StressToolExecution } from '../types';
 
 const API_URL: string = import.meta.env.VITE_API_URL ?? '';
 const API_BEARER_TOKEN: string = import.meta.env.VITE_API_BEARER_TOKEN ?? '';
@@ -42,6 +42,7 @@ async function postStressChat(body: {
   message: string;
   conversationId?: string;
   workspaceId?: string;
+  attachment?: MessageAttachment;
 }): Promise<StressChatResult> {
   const res = await fetch(url(`${STRESS_ANALYST_BASE}/chat`), {
     method: 'POST',
@@ -211,11 +212,13 @@ export async function saveAnalysisFile(
 export async function sendChatMessage(
   _history: ChatMessage[],
   message: string,
+  attachment?: MessageAttachment,
 ): Promise<ChatMessage> {
   const result = await postStressChat({
     message,
     conversationId: activeConversationId ?? undefined,
     workspaceId: WORKSPACE_ID,
+    attachment,
   });
 
   if (result.conversationId) {

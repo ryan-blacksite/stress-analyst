@@ -8,7 +8,7 @@ import {
   sendChatMessage,
   type StressWorkspaceFile,
 } from '../api/client';
-import type { AnalysisSnapshot, ChatMessage, StressToolExecution } from '../types';
+import type { AnalysisSnapshot, ChatMessage, MessageAttachment, StressToolExecution } from '../types';
 import './Workspace.css';
 
 const WELCOME: ChatMessage = {
@@ -140,6 +140,30 @@ interface LoadedFile {
   snapshot: AnalysisSnapshot | null;
 }
 
+interface DraftAttachment {
+  file: File;
+  previewUrl: string;
+}
+
+const ACCEPTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+function isAcceptedImage(file: File): boolean {
+  return ACCEPTED_IMAGE_TYPES.has(file.type);
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const commaIndex = result.indexOf(',');
+      resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read attachment.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 function tryParseSnapshot(text: string): AnalysisSnapshot | null {
   try {
     const parsed = JSON.parse(text) as Partial<AnalysisSnapshot>;
@@ -162,6 +186,9 @@ export default function Workspace() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState(false);
+  const [draftAttachment, setDraftAttachment] = useState<DraftAttachment | null>(null);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
 
   const [files, setFiles] = useState<StressWorkspaceFile[]>([]);
   const [filesError, setFilesError] = useState<string | null>(null);
@@ -170,9 +197,11 @@ export default function Workspace() {
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
   const [fileOpInProgress, setFileOpInProgress] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [filesExpanded, setFilesExpanded] = useState(false);
 
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const latestToolRun = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -206,23 +235,68 @@ export default function Workspace() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, pending]);
 
+  useEffect(() => () => {
+    if (draftAttachment) {
+      URL.revokeObjectURL(draftAttachment.previewUrl);
+    }
+  }, [draftAttachment]);
+
+  const clearDraftAttachment = useCallback(() => {
+    setDraftAttachment((current) => {
+      if (current) {
+        URL.revokeObjectURL(current.previewUrl);
+      }
+      return null;
+    });
+    setAttachmentError(null);
+  }, []);
+
+  const handleSelectedFile = useCallback((file: File | null) => {
+    if (!file) return;
+    if (!isAcceptedImage(file)) {
+      setAttachmentError('Attach a PNG, JPG, WEBP, or GIF image.');
+      return;
+    }
+
+    setAttachmentError(null);
+    setDraftAttachment((current) => {
+      if (current) {
+        URL.revokeObjectURL(current.previewUrl);
+      }
+      return {
+        file,
+        previewUrl: URL.createObjectURL(file),
+      };
+    });
+  }, []);
+
   const handleSend = useCallback(async () => {
     const text = draft.trim();
-    if (!text || pending) return;
+    if ((!text && !draftAttachment) || pending) return;
+
+    let attachment: MessageAttachment | undefined;
+    if (draftAttachment) {
+      attachment = {
+        filename: draftAttachment.file.name,
+        mimeType: draftAttachment.file.type,
+        data: await fileToBase64(draftAttachment.file),
+      };
+    }
 
     const userMsg: ChatMessage = {
       id: uid('user'),
       role: 'user',
-      content: text,
+      content: text || `[Attached image: ${draftAttachment?.file.name ?? 'image'}]`,
       timestamp: new Date().toISOString(),
     };
     const history = messages;
     setMessages((prev) => [...prev, userMsg]);
     setDraft('');
+    clearDraftAttachment();
     setPending(true);
 
     try {
-      const reply = await sendChatMessage(history, text);
+      const reply = await sendChatMessage(history, text, attachment);
       setMessages((prev) => [...prev, reply]);
       if (reply.toolExecutions && reply.toolExecutions.length > 0) {
         setLoadedFile(null);
@@ -243,13 +317,38 @@ export default function Workspace() {
       setPending(false);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [draft, messages, pending]);
+  }, [clearDraftAttachment, draft, draftAttachment, messages, pending]);
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void handleSend();
     }
+  }
+
+  function onFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    handleSelectedFile(e.target.files?.[0] ?? null);
+    e.target.value = '';
+  }
+
+  function onDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    if (pending) return;
+    e.dataTransfer.dropEffect = 'copy';
+    setDragActive(true);
+  }
+
+  function onDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      setDragActive(false);
+    }
+  }
+
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragActive(false);
+    if (pending) return;
+    handleSelectedFile(e.dataTransfer.files?.[0] ?? null);
   }
 
   const handleFileClick = useCallback(async (file: StressWorkspaceFile) => {
@@ -388,30 +487,93 @@ export default function Workspace() {
               )}
             </div>
 
-            <div className="ws__composer">
-              <textarea
-                ref={inputRef}
-                className="ws__input"
-                placeholder="Describe the structure, constraints, and loads..."
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={onKeyDown}
-                rows={2}
+            <div
+              className={`ws__composer${dragActive ? ' ws__composer--drag' : ''}`}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDrop={onDrop}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="ws__file-input"
+                onChange={onFileInputChange}
+                tabIndex={-1}
               />
-              <button
-                type="button"
-                className="ws__send"
-                onClick={() => void handleSend()}
-                disabled={pending || draft.trim().length === 0}
-              >
-                Send
-              </button>
+              {draftAttachment && (
+                <div className="ws__attachment-preview">
+                  <img
+                    src={draftAttachment.previewUrl}
+                    alt={draftAttachment.file.name}
+                    className="ws__attachment-thumb"
+                  />
+                  <div className="ws__attachment-meta">
+                    <span className="ws__attachment-name">{draftAttachment.file.name}</span>
+                    <span className="ws__attachment-type">{draftAttachment.file.type.replace('image/', '').toUpperCase()}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="ws__attachment-remove"
+                    onClick={clearDraftAttachment}
+                    aria-label="Remove attached image"
+                    disabled={pending}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+              {attachmentError && <div className="ws__attachment-error">{attachmentError}</div>}
+              <div className="ws__composer-row">
+                <button
+                  type="button"
+                  className="ws__attach"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Attach image"
+                  title="Attach image"
+                  disabled={pending}
+                >
+                  <PaperclipIcon />
+                </button>
+                <textarea
+                  ref={inputRef}
+                  className="ws__input"
+                  placeholder="Describe the structure, constraints, and loads..."
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={onKeyDown}
+                  rows={2}
+                />
+                <button
+                  type="button"
+                  className="ws__send"
+                  onClick={() => void handleSend()}
+                  disabled={pending || (draft.trim().length === 0 && !draftAttachment)}
+                >
+                  Send
+                </button>
+              </div>
             </div>
           </section>
 
-          <section className="ws__files" aria-label="Saved analyses">
+          <section
+            className={`ws__files${filesExpanded ? ' ws__files--expanded' : ' ws__files--collapsed'}`}
+            aria-label="Saved analyses"
+          >
             <div className="ws__panel-head">
-              <span className="ws__panel-label">Saved Analyses</span>
+              <button
+                type="button"
+                className="ws__files-toggle"
+                onClick={() => setFilesExpanded((v) => !v)}
+                aria-expanded={filesExpanded}
+                aria-controls="ws-file-list"
+              >
+                <span className="ws__files-toggle-caret" aria-hidden="true">
+                  {filesExpanded ? '−' : '+'}
+                </span>
+                <span className="ws__panel-label">Saved Analyses</span>
+                <span className="ws__files-count" aria-hidden="true">{files.length}</span>
+              </button>
               <button
                 type="button"
                 className="ws__file-save"
@@ -423,7 +585,7 @@ export default function Workspace() {
               </button>
             </div>
 
-            <div className="ws__file-list" role="list">
+            <div id="ws-file-list" className="ws__file-list" role="list">
               {loadingFiles && files.length === 0 ? (
                 <div className="ws__file-empty">Loading…</div>
               ) : filesError ? (
@@ -503,6 +665,21 @@ export default function Workspace() {
         </section>
       </main>
     </div>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" className="ws__attach-icon">
+      <path
+        d="M7.5 10.625 11.875 6.25a2.652 2.652 0 1 1 3.75 3.75l-5.312 5.313a4.42 4.42 0 0 1-6.25-6.25l5-5a6.188 6.188 0 1 1 8.75 8.75l-5.625 5.625"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.6"
+      />
+    </svg>
   );
 }
 

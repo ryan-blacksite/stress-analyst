@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { Dirent, promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
 import { openRouterFetch } from './openrouter';
@@ -10,16 +10,20 @@ import type {
   RerankResponse,
 } from './types';
 
-const KNOWLEDGE_FILE_CANDIDATES = [
-  path.resolve(process.cwd(), 'knowledge', 'aerospace_stress_analysis_references.md'),
-  path.resolve(process.cwd(), 'knowledge', 'aerospace-stress-analysis-references.md'),
-];
+const KNOWLEDGE_DIR = path.resolve(process.cwd(), 'knowledge');
 const CACHE_DIR = path.resolve(process.cwd(), '.cache');
 const CACHE_FILE = path.join(CACHE_DIR, 'stress-analyst-knowledge.json');
 const EMBEDDING_MODEL = process.env.STRESS_ANALYST_EMBEDDING_MODEL ?? 'openai/text-embedding-3-small';
 const RERANK_MODEL = 'cohere/rerank-4-fast';
 const DEFAULT_TOP_K = 4;
 
+interface KnowledgeDocument {
+  absolutePath: string;
+  relativePath: string;
+  content: string;
+}
+
+let knowledgeDocumentsCache: KnowledgeDocument[] | null = null;
 let knowledgeTextCache: string | null = null;
 let chunkCache: KnowledgeChunk[] | null = null;
 let initPromise: Promise<KnowledgeChunk[] | null> | null = null;
@@ -30,19 +34,50 @@ interface PersistedKnowledgeCache {
   chunks: KnowledgeChunk[];
 }
 
-async function resolveKnowledgeFile(): Promise<string> {
-  for (const candidate of KNOWLEDGE_FILE_CANDIDATES) {
-    try {
-      await fs.access(candidate);
-      return candidate;
-    } catch {
-      // keep trying
+async function walkMarkdownFiles(directory: string): Promise<string[]> {
+  const entries: Dirent[] = await fs.readdir(directory, { withFileTypes: true });
+  const collected: string[] = [];
+
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      collected.push(...(await walkMarkdownFiles(entryPath)));
+      continue;
+    }
+
+    if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+      collected.push(entryPath);
     }
   }
 
-  throw new Error(
-    `Knowledge file not found. Checked: ${KNOWLEDGE_FILE_CANDIDATES.join(', ')}`,
+  return collected;
+}
+
+function normalizePathForDisplay(filePath: string): string {
+  return filePath.split(path.sep).join('/');
+}
+
+async function readKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+  if (knowledgeDocumentsCache !== null) {
+    return knowledgeDocumentsCache;
+  }
+
+  const markdownFiles = (await walkMarkdownFiles(KNOWLEDGE_DIR)).sort((left, right) =>
+    left.localeCompare(right),
   );
+  if (markdownFiles.length === 0) {
+    throw new Error(`No markdown knowledge files found under ${KNOWLEDGE_DIR}`);
+  }
+
+  knowledgeDocumentsCache = await Promise.all(
+    markdownFiles.map(async (absolutePath) => {
+      const relativePath = normalizePathForDisplay(path.relative(KNOWLEDGE_DIR, absolutePath));
+      const content = await fs.readFile(absolutePath, 'utf8');
+      return { absolutePath, relativePath, content };
+    }),
+  );
+
+  return knowledgeDocumentsCache;
 }
 
 async function readKnowledgeText(): Promise<string> {
@@ -50,8 +85,14 @@ async function readKnowledgeText(): Promise<string> {
     return knowledgeTextCache;
   }
 
-  const filename = await resolveKnowledgeFile();
-  knowledgeTextCache = await fs.readFile(filename, 'utf8');
+  const documents = await readKnowledgeDocuments();
+  knowledgeTextCache = documents
+    .map(
+      (document) =>
+        `# Source: ${document.relativePath}\n\n${document.content.trim()}`,
+    )
+    .join('\n\n---\n\n');
+
   return knowledgeTextCache;
 }
 
@@ -188,8 +229,11 @@ async function rerankScoredChunks(
 
 async function initializeKnowledge(): Promise<KnowledgeChunk[] | null> {
   try {
-    const markdown = await readKnowledgeText();
-    const hash = hashContent(markdown);
+    const documents = await readKnowledgeDocuments();
+    const hashInput = documents
+      .map((document) => `${document.relativePath}\n${document.content}`)
+      .join('\n\n===\n\n');
+    const hash = hashContent(hashInput);
     const persisted = await loadPersistedCache(hash);
 
     if (persisted?.length) {
@@ -197,16 +241,20 @@ async function initializeKnowledge(): Promise<KnowledgeChunk[] | null> {
       return persisted;
     }
 
-    const sections = splitByHeadings(markdown);
     const chunks: KnowledgeChunk[] = [];
 
-    for (const section of sections) {
-      const embedding = await embedText(section.text);
-      chunks.push({
-        heading: section.heading,
-        text: section.text,
-        embedding,
-      });
+    for (const document of documents) {
+      const sections = splitByHeadings(document.content);
+
+      for (const section of sections) {
+        const chunkText = `Source: ${document.relativePath}\n\n${section.text}`;
+        const embedding = await embedText(chunkText);
+        chunks.push({
+          heading: `${document.relativePath} :: ${section.heading}`,
+          text: chunkText,
+          embedding,
+        });
+      }
     }
 
     chunkCache = chunks;

@@ -225,11 +225,128 @@
 /* Composer */
 .ws__composer {
   display: flex;
+  flex-direction: column;
   gap: 10px;
   padding: 14px 18px 16px;
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-panel-alt);
   flex-shrink: 0;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.ws__composer--drag {
+  background: rgba(91, 141, 214, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(91, 141, 214, 0.35);
+}
+
+.ws__composer-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.ws__file-input {
+  display: none;
+}
+
+.ws__attach {
+  width: 44px;
+  flex: 0 0 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-0);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.ws__attach:hover:not(:disabled) {
+  color: var(--text-0);
+  border-color: var(--accent-line);
+  background: rgba(91, 141, 214, 0.08);
+}
+
+.ws__attach:disabled {
+  color: var(--text-3);
+  background: var(--bg-3);
+}
+
+.ws__attach-icon {
+  width: 17px;
+  height: 17px;
+}
+
+.ws__attachment-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(8, 15, 27, 0.92);
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+}
+
+.ws__attachment-thumb {
+  width: 54px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  background: var(--bg-0);
+}
+
+.ws__attachment-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ws__attachment-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws__attachment-type {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.ws__attachment-remove {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-size: 18px;
+  line-height: 1;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.ws__attachment-remove:hover:not(:disabled) {
+  color: var(--text-0);
+  border-color: rgba(198, 93, 93, 0.4);
+  background: rgba(198, 93, 93, 0.08);
+}
+
+.ws__attachment-error {
+  font-size: 11px;
+  color: var(--danger);
+  font-family: var(--font-mono);
 }
 
 .ws__input {
@@ -768,6 +885,24 @@
   background: rgba(91, 141, 214, 0.08);
 }
 
+/* Files panel toggle — hidden on desktop, exposed on mobile */
+.ws__files-toggle {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: default;
+  color: inherit;
+  min-height: 24px;
+}
+
+.ws__files-toggle-caret,
+.ws__files-count {
+  display: none;
+}
+
 @media (max-width: 980px) {
   .ws__body {
     grid-template-columns: 1fr;
@@ -781,5 +916,247 @@
   .ws__files {
     flex: 0 0 auto;
     max-height: 260px;
+  }
+
+  .ws__composer-row {
+    align-items: stretch;
+  }
+}
+
+/* Mobile: stack chat on top, canvas below, files as accordion drawer */
+@media (max-width: 768px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .ws {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .ws__topbar {
+    padding: 12px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .ws__body {
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: none;
+    grid-template-rows: none;
+    gap: 12px;
+    padding: 12px 12px 16px;
+  }
+
+  /* Dissolve left col so its children participate in the parent flex and can be reordered */
+  .ws__left-col {
+    display: contents;
+  }
+
+  .ws__chat {
+    order: 1;
+    flex: 0 0 auto;
+    min-height: 60vh;
+    max-height: 72vh;
+  }
+
+  .ws__canvas {
+    order: 2;
+    flex: 0 0 auto;
+    min-height: 55vh;
+  }
+
+  .ws__files {
+    order: 3;
+    flex: 0 0 auto;
+    max-height: none;
+  }
+
+  /* Accordion: panel head stays; list collapses */
+  .ws__files-toggle {
+    cursor: pointer;
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+  .ws__files-toggle-caret {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--accent);
+    border: 1px solid var(--accent-line);
+    border-radius: 2px;
+    font-weight: 400;
+  }
+
+  .ws__files-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 20px;
+    padding: 0 6px;
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-2);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ws__files--collapsed .ws__file-list,
+  .ws__files--collapsed .ws__file-error--footer {
+    display: none;
+  }
+
+  .ws__files--collapsed {
+    border-bottom-width: 1px;
+  }
+
+  .ws__files--expanded .ws__file-list {
+    max-height: 50vh;
+  }
+
+  /* Larger tap targets on composer */
+  .ws__composer {
+    padding: 12px 12px 14px;
+  }
+
+  .ws__composer-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ws__attach {
+    width: 48px;
+    flex: 0 0 48px;
+    min-height: 48px;
+  }
+
+  .ws__input {
+    flex: 1 1 calc(100% - 56px);
+    min-height: 48px;
+    font-size: 16px; /* prevent iOS zoom on focus */
+    padding: 12px 14px;
+  }
+
+  .ws__send {
+    flex: 1 1 100%;
+    min-height: 48px;
+    padding: 14px 22px;
+    font-size: 13px;
+  }
+
+  /* Canvas padding trim for mobile; ensure horizontal scroll for wide content */
+  .ws__canvas-body {
+    padding: 16px 14px 22px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .report {
+    margin: 0;
+  }
+
+  .report__header {
+    padding: 12px 14px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .report__content {
+    padding: 16px 14px 20px;
+    font-size: 12px;
+    gap: 22px;
+  }
+
+  .report__governing {
+    grid-template-columns: auto 1fr;
+  }
+
+  .report__step {
+    padding: 10px 12px 12px 34px;
+  }
+
+  .report__step::before {
+    left: 10px;
+  }
+
+  .report__step-line {
+    grid-template-columns: 74px 1fr;
+    font-size: 11px;
+  }
+
+  /* Allow tables to scroll horizontally on narrow screens */
+  .report__inputs,
+  .report__checks {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .report__table {
+    min-width: 320px;
+  }
+
+  .ws__panel-head {
+    padding: 12px 14px;
+  }
+
+  .ws__panel-head--canvas {
+    padding: 12px 14px;
+  }
+
+  .ws__canvas-head-right {
+    gap: 8px;
+  }
+
+  /* Roomier file list items on touch devices */
+  .ws__file-list {
+    padding: 8px 8px 10px;
+  }
+
+  .ws__file-item {
+    padding: 12px 12px;
+  }
+
+  .ws__file-save {
+    padding: 8px 12px;
+    min-height: 36px;
+  }
+
+  /* Session indicator takes less space */
+  .ws__session {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+  }
+}
+
+/* Very small phones: allow the body to flow, not fight viewport */
+@media (max-width: 400px) {
+  .ws__topbar {
+    padding: 10px 12px;
+  }
+
+  .ws__brand-text {
+    font-size: 11px;
+    letter-spacing: 0.14em;
+  }
+
+  .ws__body {
+    padding: 10px 10px 14px;
+  }
+
+  .report__content {
+    padding: 14px 12px 18px;
   }
 }
