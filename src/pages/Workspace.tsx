@@ -120,8 +120,8 @@ function formatInputValue(value: number | string): string {
 }
 
 function formatMargin(value: number | undefined): string {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
-  const sign = value >= 0 ? '+' : '−';
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
+  const sign = value >= 0 ? '+' : '-';
   return `${sign}${Math.abs(value).toFixed(3)}`;
 }
 
@@ -482,6 +482,10 @@ export default function Workspace() {
     setActiveFilePath(null);
   }, []);
 
+  const handleExport = useCallback(() => {
+    window.print();
+  }, []);
+
   const handleSave = useCallback(async () => {
     if (fileOpInProgress) return;
     setSaveError(null);
@@ -532,10 +536,18 @@ export default function Workspace() {
   );
 
   const canvasSubLabel = canvasMode === 'file' && loadedFile
-    ? `File · ${loadedFile.name}`
+    ? `File - ${loadedFile.name}`
     : canvasMode === 'tool' && latestToolRun
-      ? `Live · Updated ${formatTime(latestToolRun.timestamp)}`
+      ? `Live - Updated ${formatTime(latestToolRun.timestamp)}`
       : 'Idle';
+
+  const exportDateLabel = useMemo(() => (
+    new Date().toLocaleDateString([], {
+      year: 'numeric',
+      month: 'long',
+      day: '2-digit',
+    })
+  ), []);
 
   return (
     <div className="ws">
@@ -626,7 +638,7 @@ export default function Workspace() {
                     aria-label="Remove attached image"
                     disabled={pending}
                   >
-                    ×
+                    x
                   </button>
                 </div>
               )}
@@ -676,7 +688,7 @@ export default function Workspace() {
                 aria-controls="ws-file-list"
               >
                 <span className="ws__files-toggle-caret" aria-hidden="true">
-                  {filesExpanded ? '−' : '+'}
+                  {filesExpanded ? '-' : '+'}
                 </span>
                 <span className="ws__panel-label">Saved Analyses</span>
                 <span className="ws__files-count" aria-hidden="true">{files.length}</span>
@@ -688,13 +700,13 @@ export default function Workspace() {
                 disabled={!canSave}
                 title={canSave ? 'Save the current canvas to a new analysis file' : 'Run an analysis first'}
               >
-                {fileOpInProgress ? 'Saving…' : 'Save Current Analysis'}
+                {fileOpInProgress ? 'Saving...' : 'Save Current Analysis'}
               </button>
             </div>
 
             <div id="ws-file-list" className="ws__file-list" role="list">
               {loadingFiles && files.length === 0 ? (
-                <div className="ws__file-empty">Loading…</div>
+                <div className="ws__file-empty">Loading...</div>
               ) : filesError ? (
                 <div className="ws__file-error">{filesError}</div>
               ) : files.length === 0 ? (
@@ -736,6 +748,15 @@ export default function Workspace() {
             <span className="ws__panel-label">Analysis Canvas</span>
             <div className="ws__canvas-head-right">
               <span className="ws__panel-sub">{canvasSubLabel}</span>
+              <button
+                type="button"
+                className="ws__canvas-export"
+                onClick={handleExport}
+                title="Export analysis canvas as PDF"
+              >
+                <DownloadIcon />
+                <span>Export</span>
+              </button>
               {canvasMode === 'file' && (
                 <button
                   type="button"
@@ -750,6 +771,10 @@ export default function Workspace() {
           </div>
 
           <div className="ws__canvas-body">
+            <div className="ws__print-header" aria-hidden="true">
+              <span>Structural Analysis Report — Blacksite Labs</span>
+              <span>{exportDateLabel}</span>
+            </div>
             {canvasMode === 'file' && loadedFile ? (
               <FileCanvas file={loadedFile} />
             ) : canvasMode === 'tool' && latestToolRun && latestToolRun.toolExecutions ? (
@@ -768,6 +793,12 @@ export default function Workspace() {
                 </p>
               </div>
             )}
+            <div className="ws__print-footer" aria-hidden="true">
+              <span>Structural Analysis Report — Blacksite Labs</span>
+              <span>
+                Page <span className="ws__print-page-number" />
+              </span>
+            </div>
           </div>
         </section>
       </main>
@@ -790,13 +821,28 @@ function PaperclipIcon() {
   );
 }
 
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden="true" className="ws__canvas-export-icon">
+      <path
+        d="M10 3.75v7.5m0 0 3-3m-3 3-3-3M4.75 12.75v1.25A2.25 2.25 0 0 0 7 16.25h6A2.25 2.25 0 0 0 15.25 14v-1.25"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
 function FileCanvas({ file }: { file: LoadedFile }) {
   if (file.snapshot) {
     return (
       <AnalysisReport
         timestamp={file.snapshot.savedAt}
         toolExecutions={file.snapshot.toolExecutions}
-        kicker={`Saved File · ${formatDate(file.snapshot.savedAt)}`}
+        kicker={`Saved File - ${formatDate(file.snapshot.savedAt)}`}
       />
     );
   }
@@ -838,6 +884,46 @@ function AnalysisReport({ timestamp, toolExecutions, kicker = 'Analyst Output' }
   );
 }
 
+const CANVAS_SUPERSCRIPT_RE = /([A-Za-z0-9)\]])\^([+\-]?\d+(?:\.\d+)?|[a-z]{1,3})/gu;
+
+function renderCanvasNotation(text: string): ReactNode[] {
+  const subscripted = renderEngineeringNotation(text);
+  const nodes: ReactNode[] = [];
+
+  for (const segment of subscripted) {
+    if (typeof segment !== 'string') {
+      nodes.push(segment);
+      continue;
+    }
+
+    let lastIndex = 0;
+    for (const match of segment.matchAll(CANVAS_SUPERSCRIPT_RE)) {
+      const [token, base, superscript] = match;
+      const start = match.index ?? 0;
+      if (start > lastIndex) {
+        nodes.push(segment.slice(lastIndex, start));
+      }
+      nodes.push(
+        <span key={`sup-${start}-${token}`} className="msg__notation">
+          {base}
+          <sup>{superscript}</sup>
+        </span>,
+      );
+      lastIndex = start + token.length;
+    }
+
+    if (lastIndex < segment.length) {
+      nodes.push(segment.slice(lastIndex));
+    }
+  }
+
+  return nodes.length > 0 ? nodes : [text];
+}
+
+function CanvasNotationText({ text }: { text: string }) {
+  return <>{renderCanvasNotation(text)}</>;
+}
+
 function ToolExecutionSection({ execution }: { execution: StressToolExecution }) {
   const parsed = execution.resultParsed;
   const title = toolTitle(parsed?.toolName ?? execution.toolName);
@@ -847,18 +933,18 @@ function ToolExecutionSection({ execution }: { execution: StressToolExecution })
   return (
     <section className="report__section">
       <div className="report__section-head">
-        <span className="report__section-title">{title}</span>
+        <span className="report__section-title"><CanvasNotationText text={title} /></span>
         {status && <span className={statusClass}>{status}</span>}
       </div>
 
       {parsed?.summary && (
-        <p className="report__summary">{parsed.summary}</p>
+        <p className="report__summary"><CanvasNotationText text={parsed.summary} /></p>
       )}
 
       {typeof parsed?.governingMargin === 'number' && (
         <div className="report__governing">
           <span className="report__label">Governing mode</span>
-          <span className="report__value">{parsed.governingMode ?? '—'}</span>
+          <span className="report__value"><CanvasNotationText text={parsed.governingMode ?? '-'} /></span>
           <span className="report__label">Governing MS</span>
           <span className="report__value">{formatMargin(parsed.governingMargin)}</span>
         </div>
@@ -871,8 +957,8 @@ function ToolExecutionSection({ execution }: { execution: StressToolExecution })
             <tbody>
               {Object.entries(parsed.inputs).map(([key, value]) => (
                 <tr key={key}>
-                  <th scope="row">{key}</th>
-                  <td>{formatInputValue(value)}</td>
+                  <th scope="row"><CanvasNotationText text={key} /></th>
+                  <td><CanvasNotationText text={formatInputValue(value)} /></td>
                 </tr>
               ))}
             </tbody>
@@ -886,18 +972,18 @@ function ToolExecutionSection({ execution }: { execution: StressToolExecution })
           <ol className="report__step-list">
             {parsed.calculationSteps.map((step, idx) => (
               <li key={idx} className="report__step">
-                <div className="report__step-head">{step.step}</div>
+                <div className="report__step-head"><CanvasNotationText text={step.step} /></div>
                 <div className="report__step-line">
                   <span className="report__step-label">Formula</span>
-                  <span className="report__step-value">{step.formula}</span>
+                  <span className="report__step-value"><CanvasNotationText text={step.formula} /></span>
                 </div>
                 <div className="report__step-line">
                   <span className="report__step-label">Substituted</span>
-                  <span className="report__step-value">{step.values}</span>
+                  <span className="report__step-value"><CanvasNotationText text={step.values} /></span>
                 </div>
                 <div className="report__step-line">
                   <span className="report__step-label">Result</span>
-                  <span className="report__step-value report__step-result">{step.result}</span>
+                  <span className="report__step-value report__step-result"><CanvasNotationText text={step.result} /></span>
                 </div>
               </li>
             ))}
@@ -923,11 +1009,11 @@ function ToolExecutionSection({ execution }: { execution: StressToolExecution })
                   ? `${formatInputValue(check.allowableLoadLbf)} lbf`
                   : typeof check.criticalStressPsi === 'number'
                     ? `${formatInputValue(check.criticalStressPsi)} psi`
-                    : '—';
+                    : '-';
                 return (
                   <tr key={idx}>
-                    <td>{check.mode}</td>
-                    <td>{allowable}</td>
+                    <td><CanvasNotationText text={check.mode} /></td>
+                    <td><CanvasNotationText text={allowable} /></td>
                     <td>{formatMargin(check.marginOfSafety)}</td>
                     <td>
                       <span className={`report__status report__status--${check.status.toLowerCase()}`}>
@@ -947,16 +1033,16 @@ function ToolExecutionSection({ execution }: { execution: StressToolExecution })
           <div className="report__block-title">Required inputs</div>
           <ul>
             {parsed.missingInputs.map((item) => (
-              <li key={item}>{item}</li>
+              <li key={item}><CanvasNotationText text={item} /></li>
             ))}
           </ul>
         </div>
       )}
 
-      {parsed?.notes && <p className="report__notes">{parsed.notes}</p>}
+      {parsed?.notes && <p className="report__notes"><CanvasNotationText text={parsed.notes} /></p>}
 
       {!parsed && execution.resultRaw && (
-        <pre className="report__raw">{execution.resultRaw}</pre>
+        <pre className="report__raw"><CanvasNotationText text={execution.resultRaw} /></pre>
       )}
     </section>
   );

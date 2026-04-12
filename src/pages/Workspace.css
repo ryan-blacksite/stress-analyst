@@ -983,6 +983,33 @@
   gap: 12px;
 }
 
+.ws__canvas-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(45, 58, 77, 0.98);
+  color: var(--text-2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 3px 9px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.ws__canvas-export:hover {
+  color: var(--text-0);
+  border-color: var(--accent-line);
+  background: rgba(53, 68, 88, 1);
+}
+
+.ws__canvas-export-icon {
+  width: 13px;
+  height: 13px;
+}
+
 .ws__canvas-close {
   background: rgba(45, 58, 77, 0.98);
   color: var(--text-2);
@@ -1018,6 +1045,150 @@
 .ws__files-toggle-caret,
 .ws__files-count {
   display: none;
+}
+
+.ws__print-header,
+.ws__print-footer {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: auto;
+    margin: 16mm 14mm 18mm;
+  }
+
+  html,
+  body,
+  #root {
+    background: #fff !important;
+    color: #000 !important;
+    height: auto;
+    margin: 0;
+    padding: 0;
+  }
+
+  .ws {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  .ws::before,
+  .ws__topbar,
+  .ws__left-col,
+  .ws__panel-head--canvas,
+  .ws__canvas-export,
+  .ws__canvas-close {
+    display: none !important;
+  }
+
+  .ws__body {
+    display: block;
+    padding: 0;
+    margin: 0;
+  }
+
+  .ws__canvas {
+    display: block;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: #fff;
+    overflow: visible;
+  }
+
+  .ws__canvas-body {
+    padding: 0 0 14mm;
+    margin: 0;
+    overflow: visible;
+  }
+
+  .ws__print-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    border-bottom: 1px solid #000;
+    margin-bottom: 7mm;
+    padding-bottom: 2.5mm;
+    font-family: "Times New Roman", Times, serif;
+    font-size: 11pt;
+    color: #000;
+  }
+
+  .ws__print-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: fixed;
+    left: 14mm;
+    right: 14mm;
+    bottom: 2mm;
+    border-top: 1px solid #000;
+    padding-top: 2mm;
+    font-family: "Times New Roman", Times, serif;
+    font-size: 10pt;
+    color: #000;
+  }
+
+  .ws__print-page-number::after {
+    content: counter(page) " / " counter(pages);
+  }
+
+  .ws__empty {
+    min-height: 0;
+    color: #000;
+  }
+
+  .report {
+    max-width: none;
+    margin: 0;
+    background: #fff;
+    border: 1px solid #000;
+    border-radius: 0;
+    box-shadow: none;
+    color: #000;
+  }
+
+  .report__header {
+    border-bottom: 1px solid #000;
+  }
+
+  .report__content,
+  .report__summary,
+  .report__notes,
+  .report__table tbody td,
+  .report__table tbody th,
+  .report__step-value,
+  .report__value,
+  .report__section-title,
+  .report__kicker,
+  .report__time {
+    color: #000 !important;
+  }
+
+  .report__governing,
+  .report__step,
+  .report__raw {
+    background: #fff;
+    border: 1px solid #000;
+  }
+
+  .report__table th,
+  .report__table td,
+  .report__section + .report__section {
+    border-color: #000;
+  }
+
+  .report__status {
+    color: #000;
+    border: 1px solid #000;
+    background: #fff;
+  }
+
+  .report__section {
+    break-inside: avoid;
+  }
 }
 
 @media (max-width: 980px) {
