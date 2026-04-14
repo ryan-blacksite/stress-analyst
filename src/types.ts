@@ -51,5 +51,6 @@ export interface AnalysisSnapshot {
   savedAt: string;
   summary?: string;
   analysisType?: string;
+  narrativeSummary?: string;
   toolExecutions: StressToolExecution[];
 }

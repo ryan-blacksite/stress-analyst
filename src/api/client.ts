@@ -7,6 +7,10 @@ const STRESS_ANALYST_BASE = '/api/stress-analyst';
 
 let activeConversationId: string | null = null;
 
+function createConversationId(): string {
+  return `conv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function url(path: string): string {
   if (!API_URL) return path;
   return `${API_URL.replace(/\/$/, '')}${path}`;
@@ -232,6 +236,11 @@ export async function sendChatMessage(
     timestamp: new Date().toISOString(),
     toolExecutions: result.toolExecutions,
   };
+}
+
+export function resetChatConversation(): string {
+  activeConversationId = createConversationId();
+  return activeConversationId;
 }
 
 export { API_URL };

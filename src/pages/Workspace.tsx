@@ -7,6 +7,7 @@ import {
   listAnalysisFiles,
   makeAnalysisFilename,
   readAnalysisFile,
+  resetChatConversation,
   saveAnalysisFile,
   sendChatMessage,
   type StressWorkspaceFile,
@@ -21,6 +22,11 @@ const WELCOME: ChatMessage = {
     'Stress Analyst online. Describe the structure, constraints, and load cases. I will run the analysis and post the report to the canvas.',
   timestamp: new Date().toISOString(),
 };
+
+const CHAT_STORAGE_KEY = 'stress-analyst:chat-messages';
+const REPORT_MODE_STORAGE_KEY = 'stress-analyst:report-mode';
+const REPORT_MODE_INSTRUCTION = '[REPORT_MODE: Generate a structured analysis report on the canvas. Show all calculations, formulas, margins, and engineering judgment in the Analysis Canvas. Keep the chat response to a brief summary with the governing margin only.]';
+const CHAT_MODE_INSTRUCTION = '[CHAT_MODE: Respond conversationally in plain English. Keep it short. Do not include formulas, equations, or detailed calculations in the chat. If the user asks an analytical question, give a plain English summary and mention that they can enable the Report toggle for full analytical output.]';
 
 function uid(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -176,6 +182,7 @@ function tryParseSnapshot(text: string): AnalysisSnapshot | null {
         savedAt: parsed.savedAt ?? new Date().toISOString(),
         summary: parsed.summary,
         analysisType: parsed.analysisType,
+        narrativeSummary: parsed.narrativeSummary,
         toolExecutions: parsed.toolExecutions as StressToolExecution[],
       };
     }
@@ -183,6 +190,27 @@ function tryParseSnapshot(text: string): AnalysisSnapshot | null {
     // fall through to plain text
   }
   return null;
+}
+
+function restoreChatMessages(): ChatMessage[] {
+  if (typeof window === 'undefined') return [WELCOME];
+  try {
+    const raw = window.localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return [WELCOME];
+    const parsed = JSON.parse(raw) as ChatMessage[];
+    if (!Array.isArray(parsed) || parsed.length === 0) return [WELCOME];
+    const restored = parsed.filter(
+      (entry): entry is ChatMessage =>
+        !!entry
+        && typeof entry.id === 'string'
+        && (entry.role === 'user' || entry.role === 'assistant' || entry.role === 'system')
+        && typeof entry.content === 'string'
+        && typeof entry.timestamp === 'string',
+    );
+    return restored.length > 0 ? restored : [WELCOME];
+  } catch {
+    return [WELCOME];
+  }
 }
 
 const ENGINEERING_SUBSCRIPT_RE = /([\p{L}])_([a-z]{1,4})/gu;
@@ -286,8 +314,16 @@ function AssistantMessageMarkdown({ content }: { content: string }) {
 }
 
 export default function Workspace() {
-  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => restoreChatMessages());
   const [draft, setDraft] = useState('');
+  const [reportMode, setReportMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.localStorage.getItem(REPORT_MODE_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [pending, setPending] = useState(false);
   const [draftAttachment, setDraftAttachment] = useState<DraftAttachment | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -300,7 +336,12 @@ export default function Workspace() {
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
   const [fileOpInProgress, setFileOpInProgress] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [filesExpanded, setFilesExpanded] = useState(false);
+  const [fileDisplayNames, setFileDisplayNames] = useState<Record<string, string>>({});
+  const [editingFilePath, setEditingFilePath] = useState<string | null>(null);
+  const [editingFileName, setEditingFileName] = useState('');
+  const [renamePending, setRenamePending] = useState(false);
 
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -322,6 +363,25 @@ export default function Workspace() {
     try {
       const list = await listAnalysisFiles();
       setFiles(list);
+      const metadata = await Promise.all(
+        list.map(async (file) => {
+          try {
+            const text = await readAnalysisFile(file.path);
+            const snapshot = tryParseSnapshot(text);
+            const summary = snapshot?.summary?.trim();
+            return summary ? [file.path, summary] as const : null;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const nextNames: Record<string, string> = {};
+      for (const item of metadata) {
+        if (!item) continue;
+        const [path, name] = item;
+        nextNames[path] = name;
+      }
+      setFileDisplayNames(nextNames);
     } catch (err) {
       setFilesError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -338,6 +398,24 @@ export default function Workspace() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, pending]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages));
+    } catch {
+      // ignore quota/storage failures
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(REPORT_MODE_STORAGE_KEY, String(reportMode));
+    } catch {
+      // ignore quota/storage failures
+    }
+  }, [reportMode]);
+
   useEffect(() => () => {
     if (draftAttachment) {
       URL.revokeObjectURL(draftAttachment.previewUrl);
@@ -353,6 +431,22 @@ export default function Workspace() {
     });
     setAttachmentError(null);
   }, []);
+
+  const handleNewChat = useCallback(() => {
+    setMessages([]);
+    setDraft('');
+    clearDraftAttachment();
+    setAttachmentError(null);
+    resetChatConversation();
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify([]));
+      } catch {
+        // ignore quota/storage failures
+      }
+    }
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [clearDraftAttachment]);
 
   const handleSelectedFile = useCallback((file: File | null) => {
     if (!file) return;
@@ -392,6 +486,8 @@ export default function Workspace() {
       content: text || `[Attached image: ${draftAttachment?.file.name ?? 'image'}]`,
       timestamp: new Date().toISOString(),
     };
+    const modeInstruction = reportMode ? REPORT_MODE_INSTRUCTION : CHAT_MODE_INSTRUCTION;
+    const outboundMessage = text ? `${modeInstruction}\n\n${text}` : modeInstruction;
     const history = messages;
     setMessages((prev) => [...prev, userMsg]);
     setDraft('');
@@ -399,7 +495,7 @@ export default function Workspace() {
     setPending(true);
 
     try {
-      const reply = await sendChatMessage(history, text, attachment);
+      const reply = await sendChatMessage(history, outboundMessage, attachment);
       setMessages((prev) => [...prev, reply]);
       if (reply.toolExecutions && reply.toolExecutions.length > 0) {
         setLoadedFile(null);
@@ -420,7 +516,7 @@ export default function Workspace() {
       setPending(false);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [clearDraftAttachment, draft, draftAttachment, messages, pending]);
+  }, [clearDraftAttachment, draft, draftAttachment, messages, pending, reportMode]);
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -503,6 +599,7 @@ export default function Workspace() {
         savedAt: new Date().toISOString(),
         summary,
         analysisType,
+        narrativeSummary: latestToolRun.content || undefined,
         toolExecutions: latestToolRun.toolExecutions,
       };
       content = JSON.stringify(snapshot, null, 2);
@@ -523,6 +620,61 @@ export default function Workspace() {
       setFileOpInProgress(false);
     }
   }, [fileOpInProgress, latestToolRun, loadedFile, refreshFiles]);
+
+  const startRenameFile = useCallback((file: StressWorkspaceFile) => {
+    const initial = fileDisplayNames[file.path] ?? file.slug ?? file.name;
+    setEditingFilePath(file.path);
+    setEditingFileName(initial);
+    setRenameError(null);
+  }, [fileDisplayNames]);
+
+  const cancelRenameFile = useCallback(() => {
+    setEditingFilePath(null);
+    setEditingFileName('');
+    setRenameError(null);
+  }, []);
+
+  const commitRenameFile = useCallback(async (file: StressWorkspaceFile) => {
+    const nextName = editingFileName.trim();
+    if (!nextName) {
+      setRenameError('Name cannot be empty.');
+      return;
+    }
+
+    setRenamePending(true);
+    setRenameError(null);
+    try {
+      const currentContent = await readAnalysisFile(file.path);
+      let nextContent = currentContent;
+      const snapshot = tryParseSnapshot(currentContent);
+
+      if (snapshot) {
+        nextContent = JSON.stringify({ ...snapshot, summary: nextName }, null, 2);
+      } else {
+        const parsed = JSON.parse(currentContent) as Record<string, unknown>;
+        nextContent = JSON.stringify({ ...parsed, summary: nextName }, null, 2);
+      }
+
+      await saveAnalysisFile(file.name, nextContent);
+      setFileDisplayNames((prev) => ({ ...prev, [file.path]: nextName }));
+
+      if (loadedFile?.path === file.path) {
+        setLoadedFile({
+          ...loadedFile,
+          content: nextContent,
+          snapshot: tryParseSnapshot(nextContent),
+        });
+      }
+
+      setEditingFilePath(null);
+      setEditingFileName('');
+      await refreshFiles();
+    } catch (err) {
+      setRenameError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRenamePending(false);
+    }
+  }, [editingFileName, loadedFile, refreshFiles]);
 
   const canvasMode: 'file' | 'tool' | 'empty' = loadedFile
     ? 'file'
@@ -556,40 +708,56 @@ export default function Workspace() {
           <span className="ws__mark" aria-hidden="true" />
           <span className="ws__brand-text">Stress Analyst</span>
         </Link>
-        <div className="ws__session">
-          <span className="ws__session-dot" aria-hidden="true" />
-          <span>Session active</span>
-        </div>
       </header>
 
       <main className="ws__body">
         <div className="ws__left-col">
           <section className="ws__chat" aria-label="Agent chat">
             <div className="ws__panel-head">
-              <span className="ws__panel-label">Conversation</span>
-              <span className="ws__panel-sub">Stress Analyst Agent</span>
+              <div className="ws__chat-head">
+                <span className="ws__panel-label">Conversation</span>
+                <span className="ws__panel-sub">Stress Analyst Agent</span>
+              </div>
+              <button
+                type="button"
+                className="ws__chat-reset"
+                onClick={handleNewChat}
+                disabled={pending}
+                title="Start a new chat"
+              >
+                New Chat
+              </button>
             </div>
 
             <div className="ws__thread" ref={threadRef}>
-              {messages.map((msg) => (
-                <div key={msg.id} className={`msg msg--${msg.role}`}>
-                  <div className="msg__meta">
-                    <span className="msg__role">
-                      {msg.role === 'user'
-                        ? 'You'
-                        : msg.role === 'assistant'
-                          ? 'Analyst'
-                          : 'System'}
-                    </span>
-                    <span className="msg__time">{formatTime(msg.timestamp)}</span>
-                  </div>
-                  <div className={`msg__body${msg.role === 'assistant' ? ' msg__body--markdown' : ''}`}>
-                    {msg.role === 'assistant'
-                      ? <AssistantMessageMarkdown content={msg.content} />
-                      : msg.content}
-                  </div>
+              {messages.length === 0 ? (
+                <div className="ws__thread-empty">
+                  <p className="ws__thread-empty-title">New conversation ready.</p>
+                  <p className="ws__thread-empty-sub">
+                    Saved analyses stay in place. Send a new message to start a fresh backend conversation.
+                  </p>
                 </div>
-              ))}
+              ) : (
+                messages.map((msg) => (
+                  <div key={msg.id} className={`msg msg--${msg.role}`}>
+                    <div className="msg__meta">
+                      <span className="msg__role">
+                        {msg.role === 'user'
+                          ? 'You'
+                          : msg.role === 'assistant'
+                            ? 'Analyst'
+                            : 'System'}
+                      </span>
+                      <span className="msg__time">{formatTime(msg.timestamp)}</span>
+                    </div>
+                    <div className={`msg__body${msg.role === 'assistant' ? ' msg__body--markdown' : ''}`}>
+                      {msg.role === 'assistant'
+                        ? <AssistantMessageMarkdown content={msg.content} />
+                        : msg.content}
+                    </div>
+                  </div>
+                ))
+              )}
               {pending && (
                 <div className="msg msg--assistant">
                   <div className="msg__meta">
@@ -643,6 +811,19 @@ export default function Workspace() {
                 </div>
               )}
               {attachmentError && <div className="ws__attachment-error">{attachmentError}</div>}
+              <label
+                className="ws__report-toggle"
+                title="When enabled, the analyst generates a structured report on the canvas."
+              >
+                <input
+                  type="checkbox"
+                  className="ws__report-toggle-input"
+                  checked={reportMode}
+                  onChange={(e) => setReportMode(e.target.checked)}
+                  disabled={pending}
+                />
+                <span className="ws__report-toggle-text">Generate Report</span>
+              </label>
               <div className="ws__composer-row">
                 <button
                   type="button"
@@ -716,30 +897,92 @@ export default function Workspace() {
               ) : (
                 files.map((file) => {
                   const active = activeFilePath === file.path;
+                  const editing = editingFilePath === file.path;
+                  const displayName = fileDisplayNames[file.path] ?? file.slug ?? file.name;
+                  const openDisabled = (fileOpInProgress && !active) || renamePending;
                   return (
-                    <button
+                    <div
                       key={file.path}
-                      type="button"
                       role="listitem"
-                      className={`ws__file-item${active ? ' ws__file-item--active' : ''}`}
-                      onClick={() => void handleFileClick(file)}
-                      disabled={fileOpInProgress && !active}
+                      className={`ws__file-item${active ? ' ws__file-item--active' : ''}${openDisabled ? ' ws__file-item--disabled' : ''}`}
+                      tabIndex={openDisabled ? -1 : 0}
+                      onClick={() => {
+                        if (!openDisabled && !editing) {
+                          void handleFileClick(file);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (openDisabled || editing) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          void handleFileClick(file);
+                        }
+                      }}
                     >
                       <div className="ws__file-row">
-                        <span className="ws__file-name">{file.slug ?? file.name}</span>
+                        {editing ? (
+                          <div className="ws__file-rename" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              className="ws__file-rename-input"
+                              value={editingFileName}
+                              onChange={(e) => setEditingFileName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  void commitRenameFile(file);
+                                } else if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  cancelRenameFile();
+                                }
+                              }}
+                              aria-label="Rename analysis"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              className="ws__file-rename-action"
+                              onClick={() => void commitRenameFile(file)}
+                              disabled={renamePending}
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              className="ws__file-rename-action ws__file-rename-action--ghost"
+                              onClick={cancelRenameFile}
+                              disabled={renamePending}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="ws__file-name-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startRenameFile(file);
+                            }}
+                            disabled={renamePending}
+                            title="Rename analysis"
+                          >
+                            <span className="ws__file-name">{displayName}</span>
+                          </button>
+                        )}
                         <span className="ws__file-type">{typeLabel(file.analysisType)}</span>
                       </div>
                       <div className="ws__file-meta">
                         <span className="ws__file-date">{formatDate(file.savedAt) || file.name}</span>
                         <span className="ws__file-size">{Math.max(1, Math.round(file.size / 1024))} KB</span>
                       </div>
-                    </button>
+                    </div>
                   );
                 })
               )}
             </div>
 
             {saveError && <div className="ws__file-error ws__file-error--footer">{saveError}</div>}
+            {renameError && <div className="ws__file-error ws__file-error--footer">{renameError}</div>}
           </section>
         </div>
 
@@ -782,6 +1025,7 @@ export default function Workspace() {
                 timestamp={latestToolRun.timestamp}
                 toolExecutions={latestToolRun.toolExecutions}
                 kicker="Analyst Output"
+                narrativeSummary={latestToolRun.content}
               />
             ) : (
               <div className="ws__empty">
@@ -843,6 +1087,7 @@ function FileCanvas({ file }: { file: LoadedFile }) {
         timestamp={file.snapshot.savedAt}
         toolExecutions={file.snapshot.toolExecutions}
         kicker={`Saved File - ${formatDate(file.snapshot.savedAt)}`}
+        narrativeSummary={file.snapshot.narrativeSummary}
       />
     );
   }
@@ -863,9 +1108,10 @@ interface AnalysisReportProps {
   timestamp: string;
   toolExecutions: StressToolExecution[];
   kicker?: string;
+  narrativeSummary?: string;
 }
 
-function AnalysisReport({ timestamp, toolExecutions, kicker = 'Analyst Output' }: AnalysisReportProps) {
+function AnalysisReport({ timestamp, toolExecutions, kicker = 'Analyst Output', narrativeSummary }: AnalysisReportProps) {
   return (
     <article className="report">
       <div className="report__header">
@@ -873,6 +1119,16 @@ function AnalysisReport({ timestamp, toolExecutions, kicker = 'Analyst Output' }
         <span className="report__time">{formatTime(timestamp)}</span>
       </div>
       <div className="report__content">
+        {narrativeSummary && (
+          <section className="report__section report__section--summary">
+            <div className="report__section-head">
+              <span className="report__section-title">Summary</span>
+            </div>
+            <div className="report__narrative">
+              <AssistantMessageMarkdown content={narrativeSummary} />
+            </div>
+          </section>
+        )}
         {toolExecutions.map((execution, idx) => (
           <ToolExecutionSection
             key={execution.toolCallId ?? `${execution.toolName}-${idx}`}
