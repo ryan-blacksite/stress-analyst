@@ -5,8 +5,8 @@
   background: var(--app-background);
   color: var(--text-0);
   position: relative;
-  --ws-muted-text: #1a2a3a;
-  --ws-muted-text-soft: #203244;
+  --ws-muted-text: #2a4a5e;
+  --ws-muted-text-soft: #35586e;
 }
 
 .ws::before {
@@ -60,7 +60,7 @@
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--ws-muted-text);
+  color: var(--text-0);
 }
 
 .ws__body {
@@ -118,7 +118,7 @@
   font-weight: 600;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--ws-muted-text);
+  color: var(--text-0);
 }
 
 .ws__panel-sub {
