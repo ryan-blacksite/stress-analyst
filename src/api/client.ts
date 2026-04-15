@@ -52,6 +52,33 @@ interface ProgressivePlanReadyEvent {
   plan: any;
 }
 
+function handleProgressiveChunk(
+  chunk: string,
+  onToolResult?: (execution: StressToolExecution) => void,
+  onPlanReady?: (plan: any) => void,
+): boolean {
+  if (!chunk.includes('__toolResult') && !chunk.includes('__planReady')) {
+    return false;
+  }
+
+  try {
+    const event = JSON.parse(chunk) as Partial<ProgressiveToolResultEvent & ProgressivePlanReadyEvent>;
+    if (event.__toolResult && event.execution) {
+      onToolResult?.(event.execution);
+      return true;
+    }
+    if (event.__planReady) {
+      onPlanReady?.(event.plan);
+      return true;
+    }
+  } catch {
+    // Ignore malformed control chunks.
+  }
+
+  // Control chunks should never flow into markdown/text processing.
+  return true;
+}
+
 async function postStressChat(body: {
   message: string;
   conversationId?: string;
@@ -111,33 +138,13 @@ async function postStressChat(body: {
       if (parsed.conversationId) conversationId = parsed.conversationId;
       if (parsed.messageId) messageId = parsed.messageId;
       if (typeof parsed.chunk === 'string') {
-        const chunk = parsed.chunk.trim();
-
-        if (chunk.startsWith('{"__toolResult":true')) {
-          try {
-            const toolEvent = JSON.parse(chunk) as ProgressiveToolResultEvent;
-            if (toolEvent.__toolResult && toolEvent.execution) {
-              body.onToolResult?.(toolEvent.execution);
-              continue;
-            }
-          } catch {
-            // fall through and treat as normal text
-          }
+        const chunk = parsed.chunk;
+        const handledProgressiveChunk = handleProgressiveChunk(chunk, body.onToolResult, body.onPlanReady);
+        if (handledProgressiveChunk) {
+          continue;
         }
 
-        if (chunk.startsWith('{"__planReady":true')) {
-          try {
-            const planEvent = JSON.parse(chunk) as ProgressivePlanReadyEvent;
-            if (planEvent.__planReady) {
-              body.onPlanReady?.(planEvent.plan);
-              continue;
-            }
-          } catch {
-            // fall through and treat as normal text
-          }
-        }
-
-        content += parsed.chunk;
+        content += chunk;
       }
       if (Array.isArray(parsed.toolExecutions)) {
         toolExecutions = parsed.toolExecutions;

@@ -302,7 +302,9 @@ function restoreChatMessages(): ChatMessage[] {
 
 const ENGINEERING_SUBSCRIPT_RE = /([\p{L}])_([a-z]{1,4})/gu;
 
-function renderEngineeringNotation(text: string): ReactNode[] {
+function renderEngineeringNotation(text: unknown): ReactNode[] {
+  if (typeof text !== 'string') return [];
+
   const nodes: ReactNode[] = [];
   let lastIndex = 0;
 
@@ -1315,7 +1317,9 @@ function AnalysisReport({
 
 const CANVAS_SUPERSCRIPT_RE = /([A-Za-z0-9)\]])\^([+\-]?\d+(?:\.\d+)?|[a-z]{1,3})/gu;
 
-function renderCanvasNotation(text: string): ReactNode[] {
+function renderCanvasNotation(text: unknown): ReactNode[] {
+  if (typeof text !== 'string') return [];
+
   const subscripted = renderEngineeringNotation(text);
   const nodes: ReactNode[] = [];
 
@@ -1349,7 +1353,8 @@ function renderCanvasNotation(text: string): ReactNode[] {
   return nodes.length > 0 ? nodes : [text];
 }
 
-function CanvasNotationText({ text }: { text: string }) {
+function CanvasNotationText({ text }: { text: string | undefined }) {
+  if (typeof text !== 'string') return null;
   return <>{renderCanvasNotation(text)}</>;
 }
 
