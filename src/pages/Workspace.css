@@ -591,6 +591,41 @@
   padding: 24px 28px 32px;
 }
 
+.ws__canvas-status {
+  max-width: 880px;
+  margin: 0 auto 16px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: rgba(45, 58, 77, 0.82);
+  border: 1px solid rgba(116, 230, 255, 0.14);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(37, 57, 77, 0.14);
+}
+
+.ws__canvas-status-line {
+  width: 100%;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(116, 230, 255, 0.2), rgba(116, 230, 255, 0.92), rgba(116, 230, 255, 0.2));
+  transform-origin: center;
+  animation: canvasStatusPulse 1.5s ease-in-out infinite;
+}
+
+.ws__canvas-status-text {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-1);
+}
+
+@keyframes canvasStatusPulse {
+  0%, 100% { opacity: 0.45; transform: scaleX(0.98); }
+  50% { opacity: 1; transform: scaleX(1); }
+}
+
 .ws__empty {
   height: 100%;
   min-height: 360px;
@@ -682,9 +717,18 @@
   gap: 14px;
 }
 
+.report__section--entering {
+  animation: sectionFadeIn 300ms ease-out forwards;
+}
+
 .report__section + .report__section {
   border-top: 1px dashed var(--border-subtle);
   padding-top: 24px;
+}
+
+@keyframes sectionFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .report__section--summary {

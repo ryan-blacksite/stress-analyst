@@ -42,11 +42,23 @@ interface StressChatResult {
   toolExecutions?: StressToolExecution[];
 }
 
+interface ProgressiveToolResultEvent {
+  __toolResult: true;
+  execution: StressToolExecution;
+}
+
+interface ProgressivePlanReadyEvent {
+  __planReady: true;
+  plan: any;
+}
+
 async function postStressChat(body: {
   message: string;
   conversationId?: string;
   workspaceId?: string;
   attachment?: MessageAttachment;
+  onToolResult?: (execution: StressToolExecution) => void;
+  onPlanReady?: (plan: any) => void;
 }): Promise<StressChatResult> {
   const res = await fetch(url(`${STRESS_ANALYST_BASE}/chat`), {
     method: 'POST',
@@ -98,7 +110,35 @@ async function postStressChat(body: {
       if (parsed.error) throw new Error(parsed.error);
       if (parsed.conversationId) conversationId = parsed.conversationId;
       if (parsed.messageId) messageId = parsed.messageId;
-      if (typeof parsed.chunk === 'string') content += parsed.chunk;
+      if (typeof parsed.chunk === 'string') {
+        const chunk = parsed.chunk.trim();
+
+        if (chunk.startsWith('{"__toolResult":true')) {
+          try {
+            const toolEvent = JSON.parse(chunk) as ProgressiveToolResultEvent;
+            if (toolEvent.__toolResult && toolEvent.execution) {
+              body.onToolResult?.(toolEvent.execution);
+              continue;
+            }
+          } catch {
+            // fall through and treat as normal text
+          }
+        }
+
+        if (chunk.startsWith('{"__planReady":true')) {
+          try {
+            const planEvent = JSON.parse(chunk) as ProgressivePlanReadyEvent;
+            if (planEvent.__planReady) {
+              body.onPlanReady?.(planEvent.plan);
+              continue;
+            }
+          } catch {
+            // fall through and treat as normal text
+          }
+        }
+
+        content += parsed.chunk;
+      }
       if (Array.isArray(parsed.toolExecutions)) {
         toolExecutions = parsed.toolExecutions;
       }
@@ -217,12 +257,16 @@ export async function sendChatMessage(
   _history: ChatMessage[],
   message: string,
   attachment?: MessageAttachment,
+  onToolResult?: (execution: StressToolExecution) => void,
+  onPlanReady?: (plan: any) => void,
 ): Promise<ChatMessage> {
   const result = await postStressChat({
     message,
     conversationId: activeConversationId ?? undefined,
     workspaceId: WORKSPACE_ID,
     attachment,
+    onToolResult,
+    onPlanReady,
   });
 
   if (result.conversationId) {

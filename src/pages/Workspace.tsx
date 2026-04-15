@@ -141,6 +141,93 @@ function deriveSnapshotMeta(toolExecutions: StressToolExecution[]): { analysisTy
   return { analysisType, slug, summary };
 }
 
+interface PlanStepDescriptor {
+  description: string;
+}
+
+function executionIdentity(execution: StressToolExecution, fallbackIndex: number): string {
+  if (execution.toolCallId) return execution.toolCallId;
+  return JSON.stringify({
+    i: fallbackIndex,
+    toolName: execution.toolName,
+    displayName: execution.displayName,
+    arguments: execution.arguments,
+    resultRaw: execution.resultRaw,
+    resultParsed: execution.resultParsed,
+  });
+}
+
+function mergeToolExecutions(
+  existing: StressToolExecution[],
+  incoming: StressToolExecution[] | undefined,
+): StressToolExecution[] {
+  if (!incoming || incoming.length === 0) return existing;
+
+  const merged = [...existing];
+  const seen = new Set(merged.map((execution, index) => executionIdentity(execution, index)));
+
+  incoming.forEach((execution, index) => {
+    const key = executionIdentity(execution, existing.length + index);
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(execution);
+    }
+  });
+
+  return merged;
+}
+
+function extractPlanSteps(plan: any): PlanStepDescriptor[] {
+  if (!plan || typeof plan !== 'object') return [];
+
+  const rawSteps = Array.isArray(plan.steps)
+    ? plan.steps
+    : Array.isArray(plan.plan)
+      ? plan.plan
+      : Array.isArray(plan.items)
+        ? plan.items
+        : [];
+
+  return rawSteps
+    .map((step: any) => {
+      if (typeof step === 'string') {
+        return { description: step };
+      }
+
+      if (!step || typeof step !== 'object') return null;
+
+      const description = [
+        step.description,
+        step.summary,
+        step.title,
+        step.step,
+        step.label,
+      ].find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+      if (description) {
+        return { description };
+      }
+
+      const toolName = [step.toolName, step.tool, step.name].find(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0,
+      );
+
+      if (toolName) {
+        return { description: `Running ${toolTitle(toolName)}...` };
+      }
+
+      return null;
+    })
+    .filter((step: PlanStepDescriptor | null): step is PlanStepDescriptor => !!step);
+}
+
+function getStatusForStep(plan: any, completedTools: number): string {
+  const steps = extractPlanSteps(plan);
+  const nextStep = steps[completedTools];
+  if (nextStep) return nextStep.description;
+  return completedTools > 0 ? 'Generating summary...' : 'Preparing analysis plan...';
+}
+
 interface LoadedFile {
   path: string;
   name: string;
@@ -328,6 +415,10 @@ export default function Workspace() {
   const [draftAttachment, setDraftAttachment] = useState<DraftAttachment | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [progressiveTools, setProgressiveTools] = useState<StressToolExecution[]>([]);
+  const [currentPlan, setCurrentPlan] = useState<any | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [currentToolStatus, setCurrentToolStatus] = useState('');
 
   const [files, setFiles] = useState<StressWorkspaceFile[]>([]);
   const [filesError, setFilesError] = useState<string | null>(null);
@@ -346,6 +437,7 @@ export default function Workspace() {
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const currentPlanRef = useRef<any | null>(null);
 
   const latestToolRun = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -437,6 +529,11 @@ export default function Workspace() {
     setDraft('');
     clearDraftAttachment();
     setAttachmentError(null);
+    setProgressiveTools([]);
+    setCurrentPlan(null);
+    currentPlanRef.current = null;
+    setIsAnalyzing(false);
+    setCurrentToolStatus('');
     resetChatConversation();
     if (typeof window !== 'undefined') {
       try {
@@ -493,15 +590,57 @@ export default function Workspace() {
     setDraft('');
     clearDraftAttachment();
     setPending(true);
+    setProgressiveTools([]);
+    setCurrentPlan(null);
+    currentPlanRef.current = null;
+    setIsAnalyzing(false);
+    setCurrentToolStatus('');
+
+    if (reportMode) {
+      setLoadedFile(null);
+      setActiveFilePath(null);
+    }
 
     try {
-      const reply = await sendChatMessage(history, outboundMessage, attachment);
+      const reply = await sendChatMessage(
+        history,
+        outboundMessage,
+        attachment,
+        reportMode
+          ? (execution) => {
+            setProgressiveTools((prev) => {
+              const nextTools = mergeToolExecutions(prev, [execution]);
+              setCurrentToolStatus(getStatusForStep(currentPlanRef.current, nextTools.length));
+              return nextTools;
+            });
+          }
+          : undefined,
+        reportMode
+          ? (plan) => {
+            currentPlanRef.current = plan;
+            setCurrentPlan(plan);
+            setIsAnalyzing(true);
+            setCurrentToolStatus(getStatusForStep(plan, 0));
+          }
+          : undefined,
+      );
+
+      if (reportMode) {
+        setProgressiveTools((prev) => mergeToolExecutions(prev, reply.toolExecutions));
+        setIsAnalyzing(false);
+        setCurrentToolStatus('');
+      }
+
       setMessages((prev) => [...prev, reply]);
       if (reply.toolExecutions && reply.toolExecutions.length > 0) {
         setLoadedFile(null);
         setActiveFilePath(null);
       }
     } catch (err) {
+      if (reportMode) {
+        setIsAnalyzing(false);
+        setCurrentToolStatus('');
+      }
       const message = err instanceof Error ? err.message : String(err);
       setMessages((prev) => [
         ...prev,
@@ -676,9 +815,15 @@ export default function Workspace() {
     }
   }, [editingFileName, loadedFile, refreshFiles]);
 
+  const liveToolExecutions = reportMode
+    ? (pending ? progressiveTools : (latestToolRun?.toolExecutions ?? progressiveTools))
+    : [];
+
+  const liveNarrativeSummary = reportMode && !pending ? latestToolRun?.content : undefined;
+
   const canvasMode: 'file' | 'tool' | 'empty' = loadedFile
     ? 'file'
-    : latestToolRun && latestToolRun.toolExecutions && latestToolRun.toolExecutions.length > 0
+    : reportMode && liveToolExecutions.length > 0
       ? 'tool'
       : 'empty';
 
@@ -689,8 +834,12 @@ export default function Workspace() {
 
   const canvasSubLabel = canvasMode === 'file' && loadedFile
     ? `File - ${loadedFile.name}`
-    : canvasMode === 'tool' && latestToolRun
-      ? `Live - Updated ${formatTime(latestToolRun.timestamp)}`
+    : canvasMode === 'tool'
+      ? pending
+        ? 'Live - In Progress'
+        : latestToolRun
+          ? `Live - Updated ${formatTime(latestToolRun.timestamp)}`
+          : 'Live - Updated just now'
       : 'Idle';
 
   const exportDateLabel = useMemo(() => (
@@ -700,6 +849,15 @@ export default function Workspace() {
       day: '2-digit',
     })
   ), []);
+
+  const enteringExecutionKey = pending && liveToolExecutions.length > 0
+    ? executionIdentity(liveToolExecutions[liveToolExecutions.length - 1], liveToolExecutions.length - 1)
+    : null;
+
+  const showCanvasStatusBar = reportMode
+    && !loadedFile
+    && isAnalyzing
+    && (!!currentPlan || currentToolStatus.trim().length > 0);
 
   return (
     <div className="ws">
@@ -1018,14 +1176,21 @@ export default function Workspace() {
               <span>Structural Analysis Report — Blacksite Labs</span>
               <span>{exportDateLabel}</span>
             </div>
+            {showCanvasStatusBar && (
+              <div className="ws__canvas-status" role="status" aria-live="polite">
+                <div className="ws__canvas-status-line" aria-hidden="true" />
+                <span className="ws__canvas-status-text">{currentToolStatus}</span>
+              </div>
+            )}
             {canvasMode === 'file' && loadedFile ? (
               <FileCanvas file={loadedFile} />
-            ) : canvasMode === 'tool' && latestToolRun && latestToolRun.toolExecutions ? (
+            ) : canvasMode === 'tool' ? (
               <AnalysisReport
-                timestamp={latestToolRun.timestamp}
-                toolExecutions={latestToolRun.toolExecutions}
+                timestamp={latestToolRun?.timestamp ?? new Date().toISOString()}
+                toolExecutions={liveToolExecutions}
                 kicker="Analyst Output"
-                narrativeSummary={latestToolRun.content}
+                narrativeSummary={liveNarrativeSummary}
+                enteringExecutionKey={enteringExecutionKey}
               />
             ) : (
               <div className="ws__empty">
@@ -1109,9 +1274,16 @@ interface AnalysisReportProps {
   toolExecutions: StressToolExecution[];
   kicker?: string;
   narrativeSummary?: string;
+  enteringExecutionKey?: string | null;
 }
 
-function AnalysisReport({ timestamp, toolExecutions, kicker = 'Analyst Output', narrativeSummary }: AnalysisReportProps) {
+function AnalysisReport({
+  timestamp,
+  toolExecutions,
+  kicker = 'Analyst Output',
+  narrativeSummary,
+  enteringExecutionKey,
+}: AnalysisReportProps) {
   return (
     <article className="report">
       <div className="report__header">
@@ -1131,8 +1303,9 @@ function AnalysisReport({ timestamp, toolExecutions, kicker = 'Analyst Output', 
         )}
         {toolExecutions.map((execution, idx) => (
           <ToolExecutionSection
-            key={execution.toolCallId ?? `${execution.toolName}-${idx}`}
+            key={executionIdentity(execution, idx)}
             execution={execution}
+            entering={enteringExecutionKey === executionIdentity(execution, idx)}
           />
         ))}
       </div>
@@ -1180,14 +1353,20 @@ function CanvasNotationText({ text }: { text: string }) {
   return <>{renderCanvasNotation(text)}</>;
 }
 
-function ToolExecutionSection({ execution }: { execution: StressToolExecution }) {
+function ToolExecutionSection({
+  execution,
+  entering = false,
+}: {
+  execution: StressToolExecution;
+  entering?: boolean;
+}) {
   const parsed = execution.resultParsed;
   const title = toolTitle(parsed?.toolName ?? execution.toolName);
   const status = parsed?.status;
   const statusClass = status ? `report__status report__status--${status.toLowerCase()}` : '';
 
   return (
-    <section className="report__section">
+    <section className={`report__section${entering ? ' report__section--entering' : ''}`}>
       <div className="report__section-head">
         <span className="report__section-title"><CanvasNotationText text={title} /></span>
         {status && <span className={statusClass}>{status}</span>}
