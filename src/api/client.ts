@@ -98,7 +98,7 @@ function normalizeExecution(execution: StressToolExecution): StressToolExecution
         ...next,
         resultParsed: {
           ...resultParsed,
-          inputs: parsedInputs as Record<string, number | string>,
+          inputs: parsedInputs,
         },
       };
     } else if (containsCircularPlaceholder(resultParsed.inputs)) {

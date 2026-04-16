@@ -1,8 +1,23 @@
 export interface CalculationStep {
-  step: string;
+  step?: string;
+  stepName?: string;
   formula: string;
-  values: string;
-  result: string;
+  values?: string;
+  substitutedValues?: string;
+  result: number | string;
+  unit?: string;
+}
+
+export interface StressCheck {
+  mode: string;
+  allowable?: number;
+  applied?: number;
+  margin?: number;
+  unit?: string;
+  criticalStressPsi?: number;
+  allowableLoadLbf?: number;
+  marginOfSafety?: number;
+  status: string;
 }
 
 export interface MessageAttachment {
@@ -30,17 +45,18 @@ export interface StressToolExecution {
     component?: string;
     governingMode?: string;
     governingMargin?: number;
-    inputs?: Record<string, number | string>;
-    checks?: Array<{
-      mode: string;
-      criticalStressPsi?: number;
-      allowableLoadLbf?: number;
-      marginOfSafety: number;
-      status: string;
-    }>;
+    inputs?: Record<string, unknown>;
+    checks?: StressCheck[];
     calculationSteps?: CalculationStep[];
     missingInputs?: string[];
-    notes?: string;
+    notes?: string | string[];
+    references?: Array<{
+      source: string;
+      section: string;
+      title: string;
+      url: string;
+    }>;
+    data?: Record<string, unknown>;
   } | null;
 }
 

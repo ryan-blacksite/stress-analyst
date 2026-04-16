@@ -15,8 +15,10 @@ import {
 import type {
   AnalysisSnapshot,
   ChatMessage,
+  CalculationStep,
   MessageAttachment,
   ReportStepStatus,
+  StressCheck,
   StressToolExecution,
 } from '../types';
 import './Workspace.css';
@@ -209,6 +211,38 @@ function formatMargin(value: number | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
   const sign = value >= 0 ? '+' : '-';
   return `${sign}${Math.abs(value).toFixed(2)}`;
+}
+
+function getCheckMargin(check: StressCheck): number | undefined {
+  return typeof check.margin === 'number' ? check.margin : check.marginOfSafety;
+}
+
+function formatCheckAllowable(check: StressCheck): string {
+  if (typeof check.allowable === 'number') {
+    return `${formatInputValue(check.allowable)}${check.unit ? ` ${check.unit}` : ''}`;
+  }
+  if (typeof check.allowableLoadLbf === 'number') {
+    return `${formatInputValue(check.allowableLoadLbf)} lbf`;
+  }
+  if (typeof check.criticalStressPsi === 'number') {
+    return `${formatInputValue(check.criticalStressPsi)} psi`;
+  }
+  return '-';
+}
+
+function formatCheckApplied(check: StressCheck): string {
+  if (typeof check.applied !== 'number') return '-';
+  return `${formatInputValue(check.applied)}${check.unit ? ` ${check.unit}` : ''}`;
+}
+
+function formatStepResult(step: CalculationStep): string {
+  const value = typeof step.result === 'number' ? formatInputValue(step.result) : step.result;
+  return step.unit ? `${value} ${step.unit}` : value;
+}
+
+function formatNotes(notes: string | string[] | undefined): string[] {
+  if (!notes) return [];
+  return Array.isArray(notes) ? notes.filter(Boolean) : [notes];
 }
 
 function deriveSnapshotMeta(toolExecutions: StressToolExecution[]): { analysisType: string; slug: string; summary: string } {
@@ -1477,17 +1511,12 @@ function MarginSummaryTable({ toolExecutions }: { toolExecutions: StressToolExec
     if (!parsed?.checks || parsed.checks.length === 0) return;
     const toolTitle = formatToolHeading(parsed.toolName ?? execution.displayName ?? execution.toolName);
     parsed.checks.forEach((check, checkIdx) => {
-      const allowable = typeof check.allowableLoadLbf === 'number'
-        ? `${formatInputValue(check.allowableLoadLbf)} lbf`
-        : typeof check.criticalStressPsi === 'number'
-          ? `${formatInputValue(check.criticalStressPsi)} psi`
-          : '-';
       rows.push({
         key: `${execIdx}-${checkIdx}`,
         toolTitle,
         mode: check.mode,
-        allowable,
-        margin: check.marginOfSafety,
+        allowable: formatCheckAllowable(check),
+        margin: getCheckMargin(check),
         status: check.status,
       });
     });
@@ -1587,6 +1616,7 @@ function ToolExecutionSection({
   const status = parsed?.status;
   const statusClass = status ? `report__status report__status--${status.toLowerCase()}` : '';
   const inputEntries = normalizeInputEntries(parsed?.inputs);
+  const notes = formatNotes(parsed?.notes);
 
   return (
     <section className={`report__section${entering ? ' report__section--entering' : ''}`}>
@@ -1624,24 +1654,56 @@ function ToolExecutionSection({
         </div>
       )}
 
+      {parsed?.checks && parsed.checks.length > 0 && (
+        <div className="report__checks">
+          <div className="report__block-title">Checks</div>
+          <table className="report__table">
+            <thead>
+              <tr>
+                <th>Mode</th>
+                <th>Allowable</th>
+                <th>Applied</th>
+                <th>MS</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {parsed.checks.map((check, idx) => (
+                <tr key={`${check.mode}-${idx}`}>
+                  <td><CanvasNotationText text={check.mode} /></td>
+                  <td><CanvasNotationText text={formatCheckAllowable(check)} /></td>
+                  <td><CanvasNotationText text={formatCheckApplied(check)} /></td>
+                  <td>{formatMargin(getCheckMargin(check))}</td>
+                  <td>
+                    <span className={`report__status report__status--${check.status.toLowerCase()}`}>
+                      {check.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {parsed?.calculationSteps && parsed.calculationSteps.length > 0 && (
         <div className="report__steps">
           <div className="report__block-title">Calculation steps</div>
           <ol className="report__step-list">
             {parsed.calculationSteps.map((step, idx) => (
               <li key={idx} className="report__step">
-                <div className="report__step-head"><CanvasNotationText text={step.step} /></div>
+                <div className="report__step-head"><CanvasNotationText text={step.step ?? step.stepName} /></div>
                 <div className="report__step-line">
                   <span className="report__step-label">Formula</span>
                   <span className="report__step-value"><CanvasNotationText text={step.formula} /></span>
                 </div>
                 <div className="report__step-line">
                   <span className="report__step-label">Substituted</span>
-                  <span className="report__step-value"><CanvasNotationText text={step.values} /></span>
+                  <span className="report__step-value"><CanvasNotationText text={step.values ?? step.substitutedValues} /></span>
                 </div>
                 <div className="report__step-line">
                   <span className="report__step-label">Result</span>
-                  <span className="report__step-value report__step-result"><CanvasNotationText text={step.result} /></span>
+                  <span className="report__step-value report__step-result"><CanvasNotationText text={formatStepResult(step)} /></span>
                 </div>
               </li>
             ))}
@@ -1660,7 +1722,13 @@ function ToolExecutionSection({
         </div>
       )}
 
-      {parsed?.notes && <p className="report__notes"><CanvasNotationText text={parsed.notes} /></p>}
+      {notes.length > 0 && (
+        <div className="report__notes">
+          {notes.map((note, idx) => (
+            <p key={idx}><CanvasNotationText text={note} /></p>
+          ))}
+        </div>
+      )}
 
       {!parsed && execution.resultRaw && (
         <pre className="report__raw"><CanvasNotationText text={execution.resultRaw} /></pre>
