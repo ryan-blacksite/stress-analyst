@@ -66,6 +66,14 @@ function formatDate(iso: string | undefined): string {
 
 function toolTitle(toolName: string | undefined): string {
   switch (toolName) {
+    case 'MATERIAL_LOOKUP':
+      return 'Material Lookup';
+    case 'LOADS_ANALYSIS':
+      return 'Loads Analysis';
+    case 'SHEAR_ANALYSIS':
+      return 'Shear Analysis';
+    case 'BEARING_ANALYSIS':
+      return 'Bearing Analysis';
     case 'run_full_analysis':
       return 'Integrated Structural Analysis';
     case 'run_buckling_check':
@@ -81,6 +89,10 @@ function toolTitle(toolName: string | undefined): string {
     default:
       return toolName ?? 'Analysis';
   }
+}
+
+function formatToolHeading(toolName: string | undefined): string {
+  return toolTitle(toolName).replace(/_/g, ' ').toUpperCase();
 }
 
 function shortAnalysisType(toolName: string | undefined): string {
@@ -131,8 +143,25 @@ function formatInputValue(value: number | string): string {
   return String(value);
 }
 
+function isCircularPlaceholder(value: unknown): boolean {
+  if (value === '[Circular]') return true;
+  if (!value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some(isCircularPlaceholder);
+  return Object.values(value as Record<string, unknown>).some(isCircularPlaceholder);
+}
+
+function safeInputString(value: unknown): string {
+  if (isCircularPlaceholder(value)) return 'See analysis state';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return 'See analysis state';
+  }
+}
+
 function normalizeInputEntries(raw: unknown): Array<[string, number | string]> | null {
   if (raw == null) return null;
+  if (isCircularPlaceholder(raw)) return null;
 
   let value: unknown = raw;
 
@@ -157,18 +186,19 @@ function normalizeInputEntries(raw: unknown): Array<[string, number | string]> |
       if (typeof item === 'number' || typeof item === 'string') {
         return [String(idx), item];
       }
-      return [String(idx), JSON.stringify(item)];
+      return [String(idx), safeInputString(item)];
     });
   }
 
   if (typeof value === 'object' && value !== null) {
     const entries = Object.entries(value as Record<string, unknown>);
     if (entries.length === 0) return null;
+    if (entries.length === 1 && isCircularPlaceholder(entries[0][1])) return null;
     return entries.map(([key, v]): [string, number | string] => {
       if (typeof v === 'number' || typeof v === 'string') {
         return [key, v];
       }
-      return [key, JSON.stringify(v)];
+      return [key, safeInputString(v)];
     });
   }
 
@@ -1482,7 +1512,7 @@ function ToolExecutionSection({
   entering?: boolean;
 }) {
   const parsed = execution.resultParsed;
-  const title = toolTitle(parsed?.toolName ?? execution.toolName);
+  const title = formatToolHeading(parsed?.toolName ?? execution.displayName ?? execution.toolName);
   const status = parsed?.status;
   const statusClass = status ? `report__status report__status--${status.toLowerCase()}` : '';
   const inputEntries = normalizeInputEntries(parsed?.inputs);
@@ -1490,7 +1520,7 @@ function ToolExecutionSection({
   return (
     <section className={`report__section${entering ? ' report__section--entering' : ''}`}>
       <div className="report__section-head">
-        <span className="report__section-title"><CanvasNotationText text={title} /></span>
+        <span className="report__section-title">{title}</span>
         {status && <span className={statusClass}>{status}</span>}
       </div>
 

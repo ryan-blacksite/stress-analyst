@@ -63,33 +63,50 @@ function tryParseJsonObject(value: unknown): unknown {
   }
 }
 
+function containsCircularPlaceholder(value: unknown): boolean {
+  if (value === '[Circular]') return true;
+  if (!value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some(containsCircularPlaceholder);
+  return Object.values(value as Record<string, unknown>).some(containsCircularPlaceholder);
+}
+
+function sanitizeRecord(value: unknown): Record<string, unknown> | undefined {
+  const parsed = tryParseJsonObject(value);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  if (containsCircularPlaceholder(parsed)) return undefined;
+  return parsed as Record<string, unknown>;
+}
+
 function normalizeExecution(execution: StressToolExecution): StressToolExecution {
   if (!execution || typeof execution !== 'object') return execution;
 
   let next: StressToolExecution = execution;
 
-  const rawArgs: unknown = execution.arguments;
-  if (typeof rawArgs === 'string') {
-    const parsedArgs = tryParseJsonObject(rawArgs);
-    if (parsedArgs && typeof parsedArgs === 'object' && !Array.isArray(parsedArgs)) {
-      next = { ...next, arguments: parsedArgs as Record<string, unknown> };
-    }
+  const parsedArgs = sanitizeRecord(execution.arguments);
+  if (parsedArgs) {
+    next = { ...next, arguments: parsedArgs };
+  } else if (containsCircularPlaceholder(execution.arguments)) {
+    const { arguments: _arguments, ...rest } = next;
+    next = rest;
   }
 
   const resultParsed = next.resultParsed;
   if (resultParsed && typeof resultParsed === 'object') {
-    const rawInputs: unknown = resultParsed.inputs;
-    if (typeof rawInputs === 'string') {
-      const parsedInputs = tryParseJsonObject(rawInputs);
-      if (parsedInputs && typeof parsedInputs === 'object' && !Array.isArray(parsedInputs)) {
-        next = {
-          ...next,
-          resultParsed: {
-            ...resultParsed,
-            inputs: parsedInputs as Record<string, number | string>,
-          },
-        };
-      }
+    const parsedInputs = sanitizeRecord(resultParsed.inputs);
+    if (parsedInputs) {
+      next = {
+        ...next,
+        resultParsed: {
+          ...resultParsed,
+          inputs: parsedInputs as Record<string, number | string>,
+        },
+      };
+    } else if (containsCircularPlaceholder(resultParsed.inputs)) {
+      const { inputs: _inputs, ...restResult } = resultParsed;
+      next = {
+        ...next,
+        resultParsed: restResult,
+      };
     }
   }
 

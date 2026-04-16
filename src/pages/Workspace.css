@@ -937,7 +937,7 @@
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--ws-muted-text);
+  color: var(--accent);
   padding-top: 2px;
 }
 
