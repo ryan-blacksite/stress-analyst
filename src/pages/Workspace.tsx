@@ -208,7 +208,7 @@ function normalizeInputEntries(raw: unknown): Array<[string, number | string]> |
 function formatMargin(value: number | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
   const sign = value >= 0 ? '+' : '-';
-  return `${sign}${Math.abs(value).toFixed(3)}`;
+  return `${sign}${Math.abs(value).toFixed(2)}`;
 }
 
 function deriveSnapshotMeta(toolExecutions: StressToolExecution[]): { analysisType: string; slug: string; summary: string } {
@@ -1449,6 +1449,7 @@ function AnalysisReport({
             </div>
           </section>
         )}
+        <MarginSummaryTable toolExecutions={toolExecutions} />
         {toolExecutions.map((execution, idx) => (
           <ToolExecutionSection
             key={executionIdentity(execution, idx)}
@@ -1458,6 +1459,76 @@ function AnalysisReport({
         ))}
       </div>
     </article>
+  );
+}
+
+function MarginSummaryTable({ toolExecutions }: { toolExecutions: StressToolExecution[] }) {
+  const rows: Array<{
+    key: string;
+    toolTitle: string;
+    mode: string;
+    allowable: string;
+    margin: number | undefined;
+    status: string;
+  }> = [];
+
+  toolExecutions.forEach((execution, execIdx) => {
+    const parsed = execution.resultParsed;
+    if (!parsed?.checks || parsed.checks.length === 0) return;
+    const toolTitle = formatToolHeading(parsed.toolName ?? execution.displayName ?? execution.toolName);
+    parsed.checks.forEach((check, checkIdx) => {
+      const allowable = typeof check.allowableLoadLbf === 'number'
+        ? `${formatInputValue(check.allowableLoadLbf)} lbf`
+        : typeof check.criticalStressPsi === 'number'
+          ? `${formatInputValue(check.criticalStressPsi)} psi`
+          : '-';
+      rows.push({
+        key: `${execIdx}-${checkIdx}`,
+        toolTitle,
+        mode: check.mode,
+        allowable,
+        margin: check.marginOfSafety,
+        status: check.status,
+      });
+    });
+  });
+
+  if (rows.length === 0) return null;
+
+  return (
+    <section className="report__section report__section--summary-table">
+      <div className="report__section-head">
+        <span className="report__section-title">Margin summary</span>
+      </div>
+      <div className="report__checks">
+        <table className="report__table">
+          <thead>
+            <tr>
+              <th>Check</th>
+              <th>Mode</th>
+              <th>Allowable</th>
+              <th>MS</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.key}>
+                <td><CanvasNotationText text={row.toolTitle} /></td>
+                <td><CanvasNotationText text={row.mode} /></td>
+                <td><CanvasNotationText text={row.allowable} /></td>
+                <td>{formatMargin(row.margin)}</td>
+                <td>
+                  <span className={`report__status report__status--${row.status.toLowerCase()}`}>
+                    {row.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -1575,43 +1646,6 @@ function ToolExecutionSection({
               </li>
             ))}
           </ol>
-        </div>
-      )}
-
-      {parsed?.checks && parsed.checks.length > 0 && (
-        <div className="report__checks">
-          <div className="report__block-title">Margin summary</div>
-          <table className="report__table">
-            <thead>
-              <tr>
-                <th>Mode</th>
-                <th>Allowable</th>
-                <th>MS</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {parsed.checks.map((check, idx) => {
-                const allowable = typeof check.allowableLoadLbf === 'number'
-                  ? `${formatInputValue(check.allowableLoadLbf)} lbf`
-                  : typeof check.criticalStressPsi === 'number'
-                    ? `${formatInputValue(check.criticalStressPsi)} psi`
-                    : '-';
-                return (
-                  <tr key={idx}>
-                    <td><CanvasNotationText text={check.mode} /></td>
-                    <td><CanvasNotationText text={allowable} /></td>
-                    <td>{formatMargin(check.marginOfSafety)}</td>
-                    <td>
-                      <span className={`report__status report__status--${check.status.toLowerCase()}`}>
-                        {check.status}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
         </div>
       )}
 
