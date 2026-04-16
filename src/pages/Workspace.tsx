@@ -12,7 +12,13 @@ import {
   sendChatMessage,
   type StressWorkspaceFile,
 } from '../api/client';
-import type { AnalysisSnapshot, ChatMessage, MessageAttachment, StressToolExecution } from '../types';
+import type {
+  AnalysisSnapshot,
+  ChatMessage,
+  MessageAttachment,
+  ReportStepStatus,
+  StressToolExecution,
+} from '../types';
 import './Workspace.css';
 
 const WELCOME: ChatMessage = {
@@ -145,6 +151,23 @@ interface PlanStepDescriptor {
   description: string;
 }
 
+interface CanvasStatusState {
+  text: string;
+  progress: number | null;
+}
+
+const STEP_STATUS_LABELS: Record<string, string> = {
+  material_lookup: 'Looking up material properties...',
+  environmental_knockdown: 'Computing environmental factors...',
+  bearing_analysis: 'Running bearing analysis...',
+  shear_analysis: 'Running shear analysis...',
+  buckling_analysis: 'Running buckling analysis...',
+  net_tension_analysis: 'Running net tension analysis...',
+  interaction_analysis: 'Running interaction check...',
+  loads_analysis: 'Computing load distribution...',
+  margin_of_safety: 'Calculating margin of safety...',
+};
+
 function executionIdentity(execution: StressToolExecution, fallbackIndex: number): string {
   if (execution.toolCallId) return execution.toolCallId;
   return JSON.stringify({
@@ -221,11 +244,52 @@ function extractPlanSteps(plan: any): PlanStepDescriptor[] {
     .filter((step: PlanStepDescriptor | null): step is PlanStepDescriptor => !!step);
 }
 
-function getStatusForStep(plan: any, completedTools: number): string {
-  const steps = extractPlanSteps(plan);
-  const nextStep = steps[completedTools];
-  if (nextStep) return nextStep.description;
-  return completedTools > 0 ? 'Generating summary...' : 'Preparing analysis plan...';
+function getPlanStepCount(plan: any): number {
+  return extractPlanSteps(plan).length;
+}
+
+function formatPlanReadyStatus(plan: any): CanvasStatusState {
+  const stepCount = getPlanStepCount(plan);
+  const label = stepCount === 1 ? 'check' : 'checks';
+  return {
+    text: `Analysis plan ready — ${stepCount} ${label} planned`,
+    progress: null,
+  };
+}
+
+function formatFallbackStepName(toolName: string): string {
+  const cleaned = toolName
+    .replace(/_/g, ' ')
+    .trim();
+
+  if (!cleaned) return 'Running analysis...';
+
+  return `Running ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}...`;
+}
+
+function clampProgress(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}
+
+function formatStepStatus(status: ReportStepStatus): CanvasStatusState {
+  const total = Math.max(status.total, 0);
+
+  if (total > 0 && status.completed >= total) {
+    return {
+      text: 'Generating summary...',
+      progress: 1,
+    };
+  }
+
+  const safeTotal = Math.max(total, 1);
+  const currentStep = Math.min(status.completed + 1, safeTotal);
+  const friendlyLabel = STEP_STATUS_LABELS[status.current] ?? formatFallbackStepName(status.current);
+
+  return {
+    text: `${friendlyLabel} (step ${currentStep} of ${safeTotal})`,
+    progress: clampProgress(status.completed / safeTotal),
+  };
 }
 
 interface LoadedFile {
@@ -418,9 +482,8 @@ export default function Workspace() {
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [progressiveTools, setProgressiveTools] = useState<StressToolExecution[]>([]);
-  const [currentPlan, setCurrentPlan] = useState<any | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [currentToolStatus, setCurrentToolStatus] = useState('');
+  const [canvasStatus, setCanvasStatus] = useState<CanvasStatusState | null>(null);
+  const [analysisComplete, setAnalysisComplete] = useState(false);
 
   const [files, setFiles] = useState<StressWorkspaceFile[]>([]);
   const [filesError, setFilesError] = useState<string | null>(null);
@@ -439,7 +502,6 @@ export default function Workspace() {
   const threadRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const currentPlanRef = useRef<any | null>(null);
 
   const latestToolRun = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -532,10 +594,8 @@ export default function Workspace() {
     clearDraftAttachment();
     setAttachmentError(null);
     setProgressiveTools([]);
-    setCurrentPlan(null);
-    currentPlanRef.current = null;
-    setIsAnalyzing(false);
-    setCurrentToolStatus('');
+    setCanvasStatus(null);
+    setAnalysisComplete(false);
     resetChatConversation();
     if (typeof window !== 'undefined') {
       try {
@@ -593,10 +653,8 @@ export default function Workspace() {
     clearDraftAttachment();
     setPending(true);
     setProgressiveTools([]);
-    setCurrentPlan(null);
-    currentPlanRef.current = null;
-    setIsAnalyzing(false);
-    setCurrentToolStatus('');
+    setCanvasStatus(null);
+    setAnalysisComplete(false);
 
     if (reportMode) {
       setLoadedFile(null);
@@ -610,27 +668,25 @@ export default function Workspace() {
         attachment,
         reportMode
           ? (execution) => {
-            setProgressiveTools((prev) => {
-              const nextTools = mergeToolExecutions(prev, [execution]);
-              setCurrentToolStatus(getStatusForStep(currentPlanRef.current, nextTools.length));
-              return nextTools;
-            });
+            setProgressiveTools((prev) => mergeToolExecutions(prev, [execution]));
           }
           : undefined,
         reportMode
           ? (plan) => {
-            currentPlanRef.current = plan;
-            setCurrentPlan(plan);
-            setIsAnalyzing(true);
-            setCurrentToolStatus(getStatusForStep(plan, 0));
+            setCanvasStatus(formatPlanReadyStatus(plan));
+          }
+          : undefined,
+        reportMode
+          ? (status) => {
+            setCanvasStatus(formatStepStatus(status));
           }
           : undefined,
       );
 
       if (reportMode) {
         setProgressiveTools((prev) => mergeToolExecutions(prev, reply.toolExecutions));
-        setIsAnalyzing(false);
-        setCurrentToolStatus('');
+        setCanvasStatus(null);
+        setAnalysisComplete(true);
       }
 
       setMessages((prev) => [...prev, reply]);
@@ -640,8 +696,8 @@ export default function Workspace() {
       }
     } catch (err) {
       if (reportMode) {
-        setIsAnalyzing(false);
-        setCurrentToolStatus('');
+        setCanvasStatus(null);
+        setAnalysisComplete(false);
       }
       const message = err instanceof Error ? err.message : String(err);
       setMessages((prev) => [
@@ -839,6 +895,8 @@ export default function Workspace() {
     : canvasMode === 'tool'
       ? pending
         ? 'Live - In Progress'
+        : analysisComplete
+          ? 'COMPLETE'
         : latestToolRun
           ? `Live - Updated ${formatTime(latestToolRun.timestamp)}`
           : 'Live - Updated just now'
@@ -856,10 +914,17 @@ export default function Workspace() {
     ? executionIdentity(liveToolExecutions[liveToolExecutions.length - 1], liveToolExecutions.length - 1)
     : null;
 
-  const showCanvasStatusBar = reportMode
+  const visibleCanvasStatus = reportMode
     && !loadedFile
-    && isAnalyzing
-    && (!!currentPlan || currentToolStatus.trim().length > 0);
+    && pending
+    ? canvasStatus
+    : null;
+
+  const statusProgressWidth = visibleCanvasStatus?.progress != null
+    ? `${Math.round(clampProgress(visibleCanvasStatus.progress) * 100)}%`
+    : '0%';
+
+  const showCanvasStatusBar = !!visibleCanvasStatus;
 
   return (
     <div className="ws">
@@ -1180,8 +1245,15 @@ export default function Workspace() {
             </div>
             {showCanvasStatusBar && (
               <div className="ws__canvas-status" role="status" aria-live="polite">
-                <div className="ws__canvas-status-line" aria-hidden="true" />
-                <span className="ws__canvas-status-text">{currentToolStatus}</span>
+                {visibleCanvasStatus?.progress != null && (
+                  <div className="ws__canvas-status-progress" aria-hidden="true">
+                    <div
+                      className="ws__canvas-status-progress-fill"
+                      style={{ width: statusProgressWidth }}
+                    />
+                  </div>
+                )}
+                <span className="ws__canvas-status-text">{visibleCanvasStatus?.text}</span>
               </div>
             )}
             {canvasMode === 'file' && loadedFile ? (

@@ -11,6 +11,12 @@ export interface MessageAttachment {
   data: string;
 }
 
+export interface ReportStepStatus {
+  current: string;
+  completed: number;
+  total: number;
+}
+
 export interface StressToolExecution {
   toolCallId?: string;
   toolName: string;

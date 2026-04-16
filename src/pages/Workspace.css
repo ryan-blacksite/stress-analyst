@@ -604,26 +604,26 @@
   box-shadow: 0 8px 24px rgba(37, 57, 77, 0.14);
 }
 
-.ws__canvas-status-line {
+.ws__canvas-status-progress {
   width: 100%;
   height: 3px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(116, 230, 255, 0.2), rgba(116, 230, 255, 0.92), rgba(116, 230, 255, 0.2));
-  transform-origin: center;
-  animation: canvasStatusPulse 1.5s ease-in-out infinite;
+  overflow: hidden;
+  background: rgba(116, 230, 255, 0.14);
+}
+
+.ws__canvas-status-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(116, 230, 255, 0.55), rgba(116, 230, 255, 0.98));
+  transition: width 180ms ease-out;
 }
 
 .ws__canvas-status-text {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.03em;
   color: var(--text-1);
-}
-
-@keyframes canvasStatusPulse {
-  0%, 100% { opacity: 0.45; transform: scaleX(0.98); }
-  50% { opacity: 1; transform: scaleX(1); }
 }
 
 .ws__empty {

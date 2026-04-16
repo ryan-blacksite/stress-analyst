@@ -1,4 +1,9 @@
-import type { ChatMessage, MessageAttachment, StressToolExecution } from '../types';
+import type {
+  ChatMessage,
+  MessageAttachment,
+  ReportStepStatus,
+  StressToolExecution,
+} from '../types';
 
 const API_URL: string = import.meta.env.VITE_API_URL ?? '';
 const API_BEARER_TOKEN: string = import.meta.env.VITE_API_BEARER_TOKEN ?? '';
@@ -52,23 +57,46 @@ interface ProgressivePlanReadyEvent {
   plan: any;
 }
 
+interface ProgressiveStepStatusEvent {
+  __stepStatus: true;
+  current: string;
+  completed: number;
+  total: number;
+}
+
 function handleProgressiveChunk(
   chunk: string,
   onToolResult?: (execution: StressToolExecution) => void,
   onPlanReady?: (plan: any) => void,
+  onStepStatus?: (status: ReportStepStatus) => void,
 ): boolean {
-  if (!chunk.includes('__toolResult') && !chunk.includes('__planReady')) {
+  if (!chunk.includes('__toolResult') && !chunk.includes('__planReady') && !chunk.includes('__stepStatus')) {
     return false;
   }
 
   try {
-    const event = JSON.parse(chunk) as Partial<ProgressiveToolResultEvent & ProgressivePlanReadyEvent>;
+    const event = JSON.parse(chunk) as Partial<
+      ProgressiveToolResultEvent & ProgressivePlanReadyEvent & ProgressiveStepStatusEvent
+    >;
     if (event.__toolResult && event.execution) {
       onToolResult?.(event.execution);
       return true;
     }
     if (event.__planReady) {
       onPlanReady?.(event.plan);
+      return true;
+    }
+    if (
+      event.__stepStatus
+      && typeof event.current === 'string'
+      && typeof event.completed === 'number'
+      && typeof event.total === 'number'
+    ) {
+      onStepStatus?.({
+        current: event.current,
+        completed: event.completed,
+        total: event.total,
+      });
       return true;
     }
   } catch {
@@ -86,6 +114,7 @@ async function postStressChat(body: {
   attachment?: MessageAttachment;
   onToolResult?: (execution: StressToolExecution) => void;
   onPlanReady?: (plan: any) => void;
+  onStepStatus?: (status: ReportStepStatus) => void;
 }): Promise<StressChatResult> {
   const res = await fetch(url(`${STRESS_ANALYST_BASE}/chat`), {
     method: 'POST',
@@ -139,7 +168,12 @@ async function postStressChat(body: {
       if (parsed.messageId) messageId = parsed.messageId;
       if (typeof parsed.chunk === 'string') {
         const chunk = parsed.chunk;
-        const handledProgressiveChunk = handleProgressiveChunk(chunk, body.onToolResult, body.onPlanReady);
+        const handledProgressiveChunk = handleProgressiveChunk(
+          chunk,
+          body.onToolResult,
+          body.onPlanReady,
+          body.onStepStatus,
+        );
         if (handledProgressiveChunk) {
           continue;
         }
@@ -266,6 +300,7 @@ export async function sendChatMessage(
   attachment?: MessageAttachment,
   onToolResult?: (execution: StressToolExecution) => void,
   onPlanReady?: (plan: any) => void,
+  onStepStatus?: (status: ReportStepStatus) => void,
 ): Promise<ChatMessage> {
   const result = await postStressChat({
     message,
@@ -274,6 +309,7 @@ export async function sendChatMessage(
     attachment,
     onToolResult,
     onPlanReady,
+    onStepStatus,
   });
 
   if (result.conversationId) {
