@@ -52,6 +52,50 @@ interface ProgressiveToolResultEvent {
   execution: StressToolExecution;
 }
 
+function tryParseJsonObject(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeExecution(execution: StressToolExecution): StressToolExecution {
+  if (!execution || typeof execution !== 'object') return execution;
+
+  let next: StressToolExecution = execution;
+
+  const rawArgs: unknown = execution.arguments;
+  if (typeof rawArgs === 'string') {
+    const parsedArgs = tryParseJsonObject(rawArgs);
+    if (parsedArgs && typeof parsedArgs === 'object' && !Array.isArray(parsedArgs)) {
+      next = { ...next, arguments: parsedArgs as Record<string, unknown> };
+    }
+  }
+
+  const resultParsed = next.resultParsed;
+  if (resultParsed && typeof resultParsed === 'object') {
+    const rawInputs: unknown = resultParsed.inputs;
+    if (typeof rawInputs === 'string') {
+      const parsedInputs = tryParseJsonObject(rawInputs);
+      if (parsedInputs && typeof parsedInputs === 'object' && !Array.isArray(parsedInputs)) {
+        next = {
+          ...next,
+          resultParsed: {
+            ...resultParsed,
+            inputs: parsedInputs as Record<string, number | string>,
+          },
+        };
+      }
+    }
+  }
+
+  return next;
+}
+
 interface ProgressivePlanReadyEvent {
   __planReady: true;
   plan: any;
@@ -79,7 +123,7 @@ function handleProgressiveChunk(
       ProgressiveToolResultEvent & ProgressivePlanReadyEvent & ProgressiveStepStatusEvent
     >;
     if (event.__toolResult && event.execution) {
-      onToolResult?.(event.execution);
+      onToolResult?.(normalizeExecution(event.execution));
       return true;
     }
     if (event.__planReady) {
@@ -181,7 +225,7 @@ async function postStressChat(body: {
         content += chunk;
       }
       if (Array.isArray(parsed.toolExecutions)) {
-        toolExecutions = parsed.toolExecutions;
+        toolExecutions = parsed.toolExecutions.map(normalizeExecution);
       }
     }
   }

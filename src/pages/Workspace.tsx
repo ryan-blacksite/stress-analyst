@@ -131,6 +131,50 @@ function formatInputValue(value: number | string): string {
   return String(value);
 }
 
+function normalizeInputEntries(raw: unknown): Array<[string, number | string]> | null {
+  if (raw == null) return null;
+
+  let value: unknown = raw;
+
+  if (typeof value === 'string') {
+    const stringValue = value;
+    const trimmed = stringValue.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        value = JSON.parse(trimmed);
+      } catch {
+        return [['value', stringValue]];
+      }
+    } else {
+      return [['value', stringValue]];
+    }
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    return value.map((item, idx): [string, number | string] => {
+      if (typeof item === 'number' || typeof item === 'string') {
+        return [String(idx), item];
+      }
+      return [String(idx), JSON.stringify(item)];
+    });
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return null;
+    return entries.map(([key, v]): [string, number | string] => {
+      if (typeof v === 'number' || typeof v === 'string') {
+        return [key, v];
+      }
+      return [key, JSON.stringify(v)];
+    });
+  }
+
+  return [['value', String(value)]];
+}
+
 function formatMargin(value: number | undefined): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
   const sign = value >= 0 ? '+' : '-';
@@ -1441,6 +1485,7 @@ function ToolExecutionSection({
   const title = toolTitle(parsed?.toolName ?? execution.toolName);
   const status = parsed?.status;
   const statusClass = status ? `report__status report__status--${status.toLowerCase()}` : '';
+  const inputEntries = normalizeInputEntries(parsed?.inputs);
 
   return (
     <section className={`report__section${entering ? ' report__section--entering' : ''}`}>
@@ -1462,12 +1507,12 @@ function ToolExecutionSection({
         </div>
       )}
 
-      {parsed?.inputs && Object.keys(parsed.inputs).length > 0 && (
+      {inputEntries && inputEntries.length > 0 && (
         <div className="report__inputs">
           <div className="report__block-title">Inputs</div>
           <table className="report__table">
             <tbody>
-              {Object.entries(parsed.inputs).map(([key, value]) => (
+              {inputEntries.map(([key, value]) => (
                 <tr key={key}>
                   <th scope="row"><CanvasNotationText text={key} /></th>
                   <td><CanvasNotationText text={formatInputValue(value)} /></td>
